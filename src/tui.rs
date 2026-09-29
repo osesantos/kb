@@ -107,6 +107,7 @@ pub struct App {
     history: Vec<usize>,
     pos: usize,
     status: String,
+    edit: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -121,6 +122,7 @@ impl App {
             history: vec![],
             pos: 0,
             status: String::new(),
+            edit: None,
         };
         app.refilter();
         app
@@ -135,6 +137,39 @@ impl App {
             })
             .collect();
         self.list.select((!self.visible.is_empty()).then_some(0));
+    }
+
+    fn current(&self) -> Option<usize> {
+        self.reader.as_ref().map(|r| r.note).or_else(|| self.list.selected().and_then(|s| self.visible.get(s).copied()))
+    }
+
+    /// Reloads the vault from disk, remapping history, selection and reader position by path.
+    fn reload(&mut self) {
+        let old = &self.vault;
+        let path = |i: usize| old.notes[i].path.clone();
+        let hist: Vec<_> = self.history.iter().map(|&i| path(i)).collect();
+        let sel = self.list.selected().and_then(|s| self.visible.get(s)).map(|&i| path(i));
+        let reader = self.reader.as_ref().map(|r| (path(r.note), r.scroll, r.focus));
+
+        self.vault = Vault::load(&self.vault.root);
+        let find = |v: &Vault, p: &std::path::Path| v.notes.iter().position(|n| n.path == p);
+
+        self.history = hist.iter().filter_map(|p| find(&self.vault, p)).collect();
+        self.pos = self.pos.min(self.history.len().saturating_sub(1));
+        self.refilter();
+        if let Some(s) = sel.and_then(|p| find(&self.vault, &p)).and_then(|i| self.visible.iter().position(|&v| v == i)) {
+            self.list.select(Some(s));
+        }
+        self.reader = reader.and_then(|(p, scroll, focus)| {
+            let Some(i) = find(&self.vault, &p) else {
+                self.status = format!("{} was removed", p.display());
+                return None;
+            };
+            let mut r = Reader::new(&self.vault, i);
+            r.scroll = scroll;
+            r.focus = focus.filter(|&f| f < r.doc.links.len());
+            Some(r)
+        });
     }
 
     fn open(&mut self, note: usize) {
@@ -197,6 +232,7 @@ impl App {
             return true;
         }
         match code {
+            KeyCode::Char('e') => self.edit = self.current().map(|i| self.vault.root.join(&self.vault.notes[i].path)),
             KeyCode::Char('[') => self.go(-1),
             KeyCode::Char(']') => self.go(1),
             KeyCode::Enter if self.reader.is_some() => self.follow(),
@@ -248,8 +284,8 @@ impl App {
         let footer = match (self.filtering, self.status.is_empty(), self.reader.is_some()) {
             (true, _, _) => Line::from(format!("/{}█", self.filter)),
             (_, false, _) => Line::from(self.status.as_str().yellow()),
-            (_, _, true) => "↑↓ j/k scroll  tab/S-tab link  ⏎ follow  [ ] history  esc back".dark_gray().into(),
-            (_, _, false) => "↑↓ j/k move  / filter  ⏎ open  [ ] history  q quit".dark_gray().into(),
+            (_, _, true) => "↑↓ j/k scroll  tab/S-tab link  ⏎ follow  e edit  [ ] history  esc back".dark_gray().into(),
+            (_, _, false) => "↑↓ j/k move  / filter  ⏎ open  e edit  [ ] history  q quit".dark_gray().into(),
         };
         f.render_widget(footer, foot);
     }
@@ -270,15 +306,51 @@ fn external(what: &std::ffi::OsStr) -> String {
     }
 }
 
+/// True when a changed path can affect notes or attachments (git and Obsidian internals can't).
+fn relevant(p: &std::path::Path) -> bool {
+    !p.components().any(|c| c.as_os_str() == ".git" || c.as_os_str() == ".obsidian")
+}
+
+/// Suspends the TUI, runs `$VISUAL`/`$EDITOR` (may contain args) on `path`, then restores it.
+fn edit(term: &mut ratatui::DefaultTerminal, path: &std::path::Path) -> Option<String> {
+    let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
+    ratatui::restore();
+    let status = std::process::Command::new("sh").arg("-c").arg(format!("{editor} \"$1\"")).arg("sh").arg(path).status();
+    *term = ratatui::init();
+    match status {
+        Ok(s) if s.success() => None,
+        Ok(s) => Some(format!("{editor} exited with {s}")),
+        Err(e) => Some(format!("{editor}: {e}")),
+    }
+}
+
 pub fn run(vault: Vault) -> std::io::Result<()> {
+    use notify_debouncer_full::{DebounceEventResult, new_debouncer, notify::RecursiveMode};
+    use std::time::Duration;
+
+    let (tx, rx) = std::sync::mpsc::channel::<DebounceEventResult>();
+    let mut watcher = new_debouncer(Duration::from_millis(200), None, tx).map_err(std::io::Error::other)?;
+    watcher.watch(&vault.root, RecursiveMode::Recursive).map_err(std::io::Error::other)?;
+
     let mut app = App::new(vault);
     ratatui::run(|term| loop {
         term.draw(|f| app.draw(f))?;
-        if let Event::Key(k) = event::read()?
+        if let Some(path) = app.edit.take() {
+            let err = edit(term, &path);
+            app.reload();
+            app.status = err.unwrap_or_default();
+            continue;
+        }
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(k) = event::read()?
             && k.kind == KeyEventKind::Press
             && !app.key(k.code)
         {
             return Ok(());
+        }
+        let changed = rx.try_iter().flatten().flatten().any(|e| e.paths.iter().any(|p| relevant(p)));
+        if changed {
+            app.reload();
         }
     })
 }
@@ -337,6 +409,47 @@ mod tests {
         assert!(screen(&mut a).contains("› B.md"));
         keys(&mut a, &[KeyCode::Esc, KeyCode::Up, KeyCode::Enter]);
         assert!(screen(&mut a).contains("› A.md"));
+    }
+
+    #[test]
+    fn e_requests_editor_for_current_note() {
+        let (d, mut a) = app();
+        keys(&mut a, &[KeyCode::Char('e')]);
+        assert_eq!(a.edit, Some(d.path().join("A.md")));
+        keys(&mut a, &[KeyCode::Down, KeyCode::Enter, KeyCode::Char('e')]);
+        assert_eq!(a.edit, Some(d.path().join("B.md")));
+    }
+
+    #[test]
+    fn reload_keeps_reader_history_and_picks_up_changes() {
+        let (d, mut a) = app();
+        keys(&mut a, &[KeyCode::Enter, KeyCode::Tab, KeyCode::Enter]);
+        std::fs::write(d.path().join("B.md"), "# B\n\nEdited in nvim.").unwrap();
+        std::fs::write(d.path().join("0 New.md"), "new").unwrap();
+        a.reload();
+        let s = screen(&mut a);
+        assert!(s.contains("› B.md") && s.contains("Edited in nvim."), "{s}");
+        keys(&mut a, &[KeyCode::Char('[')]);
+        assert!(screen(&mut a).contains("› A.md"));
+        keys(&mut a, &[KeyCode::Esc]);
+        assert!(screen(&mut a).contains("notes (3/3)"));
+    }
+
+    #[test]
+    fn reload_closes_reader_of_deleted_note() {
+        let (d, mut a) = app();
+        keys(&mut a, &[KeyCode::Enter]);
+        std::fs::remove_file(d.path().join("A.md")).unwrap();
+        a.reload();
+        let s = screen(&mut a);
+        assert!(s.contains("A.md was removed") && s.contains("notes (1/1)"), "{s}");
+    }
+
+    #[test]
+    fn ignores_git_and_obsidian_changes() {
+        assert!(!relevant(std::path::Path::new("/v/.git/index")));
+        assert!(!relevant(std::path::Path::new("/v/.obsidian/workspace.json")));
+        assert!(relevant(std::path::Path::new("/v/Notes/x.md")));
     }
 
     #[test]
