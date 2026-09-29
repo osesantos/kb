@@ -1,5 +1,6 @@
 mod git;
 mod md;
+mod search;
 mod tui;
 mod vault;
 
@@ -7,7 +8,7 @@ use std::{path::PathBuf, time::Instant};
 use vault::Vault;
 
 fn root(arg: Option<&String>) -> PathBuf {
-    let p = PathBuf::from(arg.map_or(".", String::as_str));
+    let p = arg.map(PathBuf::from).or_else(|| std::env::var_os("KB_VAULT").map(PathBuf::from)).unwrap_or_else(|| ".".into());
     p.canonicalize().unwrap_or(p)
 }
 
@@ -23,10 +24,37 @@ fn stats(root: PathBuf) {
     println!("unresolved  {unresolved}");
 }
 
+/// `kb search [-C vault] [--json] [-n limit] words...`: grep-like lines by default, JSON for agents.
+fn search(args: &[String]) -> std::io::Result<()> {
+    let (mut vault, mut json, mut limit, mut words) = (None, false, 20, vec![]);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--json" => json = true,
+            "-C" | "--vault" => vault = it.next(),
+            "-n" => limit = it.next().and_then(|n| n.parse().ok()).unwrap_or(limit),
+            w => words.push(w),
+        }
+    }
+    let v = Vault::load(&root(vault));
+    let hits = search::lexical(&v, &words.join(" "), limit);
+    if json {
+        println!("{}", search::json(&v, &hits));
+    } else {
+        hits.iter().for_each(|h| match &h.line {
+            Some((n, l)) => println!("{}:{n}: {l}", v.notes[h.note].path.display()),
+            None => println!("{}", v.notes[h.note].path.display()),
+        });
+    }
+    if hits.is_empty() { std::process::exit(1) }
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [cmd, rest @ ..] if cmd == "stats" => Ok(stats(root(rest.first()))),
+        [cmd, rest @ ..] if cmd == "search" => search(rest),
         rest => tui::run(Vault::load(&root(rest.first()))),
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    git,
+    git, search,
     md::{self, Doc, Link, Seg},
     vault::{Target, Vault},
 };
@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Layout, Margin, Rect},
     style::{Style, Stylize},
     text::{Line, Span},
-    widgets::{List, ListState, Paragraph},
+    widgets::{List, ListItem, ListState, Paragraph},
 };
 
 struct Reader {
@@ -20,21 +20,62 @@ struct Reader {
     height: usize,
     scroll: usize,
     focus: Option<usize>,
+    find: Find,
+}
+
+/// In-note search: rows of the wrapped text containing the query, and which one is current.
+#[derive(Default, Clone)]
+struct Find {
+    query: String,
+    hits: Vec<usize>,
+    cur: usize,
+    jump: bool,
 }
 
 impl Reader {
     fn new(v: &Vault, note: usize) -> Self {
         let backlinks = v.backlinks[note].iter().map(|&i| (i, v.notes[i].title.as_str()));
         let doc = md::render(&v.read(note), backlinks);
-        Reader { note, doc, wrapped: vec![], width: 0, height: 0, scroll: 0, focus: None }
+        Reader { note, doc, wrapped: vec![], width: 0, height: 0, scroll: 0, focus: None, find: Find::default() }
     }
 
     fn layout(&mut self, width: usize, height: usize) {
         if width != self.width {
             self.wrapped = md::wrap(&self.doc.lines, width);
             self.width = width;
+            self.rehit();
         }
         self.height = height;
+        if std::mem::take(&mut self.find.jump)
+            && let Some(&y) = self.find.hits.get(self.find.cur)
+        {
+            self.scroll = y.saturating_sub(height / 3);
+            self.scroll_by(0);
+        }
+    }
+
+    fn rehit(&mut self) {
+        let q = self.find.query.to_lowercase();
+        self.find.hits = match q.trim() {
+            "" => vec![],
+            _ => (0..self.wrapped.len())
+                .filter(|&y| self.wrapped[y].iter().map(|s| s.text.as_str()).collect::<String>().to_lowercase().contains(&q))
+                .collect(),
+        };
+        self.find.cur = self.find.cur.min(self.find.hits.len().saturating_sub(1));
+    }
+
+    fn find(&mut self, q: &str) {
+        self.find = Find { query: q.into(), jump: true, ..Find::default() };
+        self.rehit();
+    }
+
+    fn step(&mut self, d: isize) {
+        let n = self.find.hits.len() as isize;
+        if n > 0 {
+            self.find.cur = (self.find.cur as isize + d).rem_euclid(n) as usize;
+            self.find.jump = true;
+        }
     }
 
     fn scroll_by(&mut self, d: isize) {
@@ -65,7 +106,10 @@ impl Reader {
     fn key(&mut self, code: KeyCode) -> bool {
         let page = self.height as isize;
         match code {
+            KeyCode::Esc if !self.find.query.is_empty() => self.find = Find::default(),
             KeyCode::Esc | KeyCode::Char('q') => return true,
+            KeyCode::Char('n') => self.step(1),
+            KeyCode::Char('N') => self.step(-1),
             KeyCode::Char('j') | KeyCode::Down => self.scroll_by(1),
             KeyCode::Char('k') | KeyCode::Up => self.scroll_by(-1),
             KeyCode::Char(' ') | KeyCode::PageDown => self.scroll_by(page),
@@ -82,14 +126,27 @@ impl Reader {
     fn draw(&mut self, f: &mut Frame, area: Rect) {
         let area = area.inner(Margin::new(1, 0));
         self.layout(area.width as usize, area.height as usize);
+        let words: Vec<String> = self.find.query.split_whitespace().map(str::to_lowercase).collect();
+        let current = self.find.hits.get(self.find.cur).copied();
         let lines: Vec<Line> = self.wrapped[self.scroll.min(self.wrapped.len())..]
             .iter()
             .take(self.height)
-            .map(|l| {
+            .enumerate()
+            .map(|(dy, l)| {
+                let y = self.scroll + dy;
+                let hit = self.find.hits.binary_search(&y).is_ok();
                 l.iter()
                     .map(|s| {
                         let focused = s.link.is_some() && s.link == self.focus;
-                        Span::styled(s.text.as_str(), if focused { s.style.reversed() } else { s.style })
+                        let lower = s.text.to_lowercase();
+                        let style = match () {
+                            _ if hit && words.iter().any(|w| lower.contains(w.as_str())) => {
+                                if current == Some(y) { s.style.black().on_yellow() } else { s.style.on_dark_gray() }
+                            }
+                            _ if focused => s.style.reversed(),
+                            _ => s.style,
+                        };
+                        Span::styled(s.text.as_str(), style)
                     })
                     .collect::<Line>()
             })
@@ -100,6 +157,8 @@ impl Reader {
 
 enum Prompt {
     Filter,
+    Find(String),
+    Search(String),
     Command(String),
     Commit(String),
 }
@@ -127,7 +186,15 @@ fn diff_lines(d: &str) -> Vec<Line<'static>> {
         .collect()
 }
 
+/// The search results view; it sits under the reader so Esc from a hit returns here.
+struct Results {
+    query: String,
+    hits: Vec<search::Hit>,
+    list: ListState,
+}
+
 pub struct App {
+    results: Option<Results>,
     vault: Vault,
     filter: String,
     prompt: Option<Prompt>,
@@ -150,6 +217,7 @@ impl App {
             vault,
             filter: String::new(),
             prompt: None,
+            results: None,
             git: None,
             dirty: None,
             push: None,
@@ -246,7 +314,7 @@ impl App {
         let Some(mut p) = self.prompt.take() else { return };
         let buf = match &mut p {
             Prompt::Filter => &mut self.filter,
-            Prompt::Command(s) | Prompt::Commit(s) => s,
+            Prompt::Command(s) | Prompt::Commit(s) | Prompt::Find(s) | Prompt::Search(s) => s,
         };
         match code {
             KeyCode::Esc => {
@@ -272,14 +340,23 @@ impl App {
     fn submit(&mut self, p: Prompt) {
         match p {
             Prompt::Filter => {}
-            Prompt::Command(c) => match c.trim() {
-                "git" | "g" => self.open_git(),
-                "notes" | "n" => {
+            Prompt::Find(q) => {
+                if let Some(r) = &mut self.reader {
+                    r.find(&q)
+                }
+            }
+            Prompt::Search(q) => self.search(q.trim()),
+            Prompt::Command(c) => match c.trim().split_once(' ').unwrap_or((c.trim(), "")) {
+                ("git" | "g", _) => self.open_git(),
+                ("notes" | "n", _) => {
                     self.git = None;
                     self.reader = None;
+                    self.results = None;
                 }
-                "q" | "quit" => self.quit = true,
-                other => self.status = format!("unknown command: {other}  (git, notes, quit)"),
+                ("search" | "s", "") => self.prompt = Some(Prompt::Search(String::new())),
+                ("search" | "s", q) => self.search(q.trim()),
+                ("q" | "quit", _) => self.quit = true,
+                (other, _) => self.status = format!("unknown command: {other}  (git, notes, search, quit)"),
             },
             Prompt::Commit(m) if m.trim().is_empty() => self.status = "commit aborted: empty message".into(),
             Prompt::Commit(m) => {
@@ -310,7 +387,7 @@ impl App {
         let path = |i: usize| old.notes[i].path.clone();
         let hist: Vec<_> = self.history.iter().map(|&i| path(i)).collect();
         let sel = self.list.selected().and_then(|s| self.visible.get(s)).map(|&i| path(i));
-        let reader = self.reader.as_ref().map(|r| (path(r.note), r.scroll, r.focus));
+        let reader = self.reader.as_ref().map(|r| (path(r.note), r.scroll, r.focus, r.find.query.clone()));
 
         self.vault = Vault::load(&self.vault.root);
         let find = |v: &Vault, p: &std::path::Path| v.notes.iter().position(|n| n.path == p);
@@ -321,7 +398,14 @@ impl App {
         if let Some(s) = sel.and_then(|p| find(&self.vault, &p)).and_then(|i| self.visible.iter().position(|&v| v == i)) {
             self.list.select(Some(s));
         }
-        self.reader = reader.and_then(|(p, scroll, focus)| {
+        if let Some(r) = self.results.take() {
+            let sel = r.list.selected();
+            self.search(&r.query);
+            if let Some(nr) = &mut self.results {
+                nr.list.select(sel.map(|s| s.min(nr.hits.len().saturating_sub(1))).filter(|_| !nr.hits.is_empty()));
+            }
+        }
+        self.reader = reader.and_then(|(p, scroll, focus, query)| {
             let Some(i) = find(&self.vault, &p) else {
                 self.status = format!("{} was removed", p.display());
                 return None;
@@ -329,6 +413,7 @@ impl App {
             let mut r = Reader::new(&self.vault, i);
             r.scroll = scroll;
             r.focus = focus.filter(|&f| f < r.doc.links.len());
+            r.find.query = query;
             Some(r)
         });
     }
@@ -369,6 +454,35 @@ impl App {
         }
     }
 
+    fn search(&mut self, q: &str) {
+        let hits = search::lexical(&self.vault, q, 500);
+        let mut list = ListState::default();
+        list.select((!hits.is_empty()).then_some(0));
+        self.git = None;
+        self.reader = None;
+        self.results = Some(Results { query: q.into(), hits, list });
+    }
+
+    fn results_key(&mut self, code: KeyCode) {
+        let Some(r) = &mut self.results else { return };
+        let sel = r.list.selected().and_then(|i| r.hits.get(i)).map(|h| h.note);
+        match (code, sel) {
+            (KeyCode::Esc | KeyCode::Char('q'), _) => self.results = None,
+            (KeyCode::Char('j') | KeyCode::Down, _) => r.list.select_next(),
+            (KeyCode::Char('k') | KeyCode::Up, _) => r.list.select_previous(),
+            (KeyCode::Char('s'), _) => self.prompt = Some(Prompt::Search(String::new())),
+            (KeyCode::Char('e'), Some(i)) => self.edit = Some(self.vault.root.join(&self.vault.notes[i].path)),
+            (KeyCode::Enter, Some(i)) => {
+                let q = r.query.clone();
+                self.open(i);
+                if let Some(rd) = &mut self.reader {
+                    rd.find(&q)
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Returns false when the app should quit.
     fn key(&mut self, code: KeyCode) -> bool {
         self.status.clear();
@@ -382,6 +496,14 @@ impl App {
         }
         if self.git.is_some() {
             self.git_key(code);
+            return true;
+        }
+        if self.reader.is_none() && self.results.is_some() && !matches!(code, KeyCode::Char('[' | ']')) {
+            self.results_key(code);
+            return true;
+        }
+        if self.reader.is_some() && code == KeyCode::Char('/') {
+            self.prompt = Some(Prompt::Find(String::new()));
             return true;
         }
         match code {
@@ -407,6 +529,7 @@ impl App {
                     KeyCode::Char('g') => self.list.select_first(),
                     KeyCode::Char('G') => self.list.select_last(),
                     KeyCode::Char('/') => self.prompt = Some(Prompt::Filter),
+                    KeyCode::Char('s') => self.prompt = Some(Prompt::Search(String::new())),
                     _ => {}
                 },
             },
@@ -416,15 +539,16 @@ impl App {
 
     fn draw(&mut self, f: &mut Frame) {
         let [head, body, foot] = Layout::vertical([Constraint::Length(1), Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
-        let crumb = match (&self.git, &self.reader) {
-            (Some(g), _) => {
+        let crumb = match (&self.git, &self.reader, &self.results) {
+            (Some(g), _, _) => {
                 let sel = g.list.selected().and_then(|i| g.entries.get(i));
                 match (&g.diff, sel) {
                     (Some(_), Some(e)) => format!("git › {}", e.path),
                     _ => format!("git ({})", g.entries.len()),
                 }
             }
-            (_, Some(r)) => self.vault.notes[r.note].path.display().to_string(),
+            (_, Some(r), _) => self.vault.notes[r.note].path.display().to_string(),
+            (_, _, Some(s)) => format!("search \"{}\" ({})", s.query, s.hits.len()),
             _ => format!("notes ({}/{})", self.visible.len(), self.vault.notes.len()),
         };
         let dirty = match self.dirty {
@@ -433,8 +557,8 @@ impl App {
         };
         f.render_widget(Line::from(vec![" kb ".black().on_cyan().bold(), format!(" {} › {crumb}", self.vault.name()).into(), dirty]), head);
 
-        match (&mut self.git, &mut self.reader) {
-            (Some(g), _) => match &g.diff {
+        match (&mut self.git, &mut self.reader, &mut self.results) {
+            (Some(g), _, _) => match &g.diff {
                 Some((lines, scroll)) => f.render_widget(Paragraph::new(lines.clone()).scroll((*scroll, 0)), body),
                 None => {
                     let items = g.entries.iter().map(|e| {
@@ -450,7 +574,21 @@ impl App {
                     }
                 }
             },
-            (_, Some(r)) => r.draw(f, body),
+            (_, Some(r), _) => r.draw(f, body),
+            (_, _, Some(s)) => {
+                let items = s.hits.iter().map(|h| {
+                    let n = &self.vault.notes[h.note];
+                    let (ln, snippet) = h.line.as_ref().map_or((String::new(), ""), |(n, l)| (format!(":{n}"), l.as_str()));
+                    ListItem::new(vec![
+                        Line::from(vec![n.title.as_str().bold(), format!("  {}{ln}", n.path.display()).dark_gray()]),
+                        Line::from(format!("  {snippet}")),
+                    ])
+                });
+                f.render_stateful_widget(List::new(items).highlight_style(Style::new().reversed()), body, &mut s.list);
+                if s.hits.is_empty() {
+                    f.render_widget("no matches".dark_gray(), body);
+                }
+            }
             _ => {
                 let items = self.visible.iter().map(|&i| {
                     let n = &self.vault.notes[i];
@@ -461,16 +599,20 @@ impl App {
             }
         }
 
-        let view = (self.git.as_ref().map(|g| g.diff.is_some()), self.reader.is_some());
+        let view = (self.git.as_ref().map(|g| g.diff.is_some()), self.reader.as_ref().map(|r| (r.find.cur, r.find.hits.len(), r.find.query.is_empty())));
         let footer = match (&self.prompt, self.status.is_empty(), view) {
             (Some(Prompt::Filter), _, _) => Line::from(format!("/{}█", self.filter)),
+            (Some(Prompt::Find(q)), _, _) => Line::from(format!("find in note: {q}█")),
+            (Some(Prompt::Search(q)), _, _) => Line::from(vec!["search: ".cyan(), format!("{q}█").into()]),
             (Some(Prompt::Command(c)), _, _) => Line::from(format!(":{c}█")),
             (Some(Prompt::Commit(m)), _, _) => Line::from(vec!["commit message: ".cyan(), format!("{m}█").into()]),
             (_, false, _) => Line::from(self.status.as_str().yellow()),
             (_, _, (Some(true), _)) => "↑↓ j/k scroll  esc back".dark_gray().into(),
             (_, _, (Some(false), _)) => "↑↓ j/k move  ⏎ diff  space stage/unstage  a stage all  c commit  p push  e edit  esc back".dark_gray().into(),
-            (_, _, (_, true)) => "↑↓ j/k scroll  tab/S-tab link  ⏎ follow  e edit  [ ] history  esc back".dark_gray().into(),
-            _ => "↑↓ j/k move  / filter  ⏎ open  e edit  [ ] history  :git  q quit".dark_gray().into(),
+            (_, _, (_, Some((cur, n, false)))) => format!("match {}/{n}  n/N next/prev  esc clear", if n == 0 { 0 } else { cur + 1 }).dark_gray().into(),
+            (_, _, (_, Some(_))) => "↑↓ j/k scroll  / find  tab/S-tab link  ⏎ follow  e edit  [ ] history  esc back".dark_gray().into(),
+            _ if self.results.is_some() => "↑↓ j/k move  ⏎ open  s new search  e edit  esc back".dark_gray().into(),
+            _ => "↑↓ j/k move  / filter  s search  ⏎ open  e edit  [ ] history  :git  q quit".dark_gray().into(),
         };
         f.render_widget(footer, foot);
     }
@@ -683,6 +825,39 @@ mod tests {
         assert!(screen(&mut a).contains("unknown command: nope"));
         type_str(&mut a, ":q");
         assert!(!a.key(KeyCode::Enter));
+    }
+
+    #[test]
+    fn search_opens_note_at_first_match_and_back_returns_to_results() {
+        let (_d, mut a) = app();
+        keys(&mut a, &[KeyCode::Char('s')]);
+        type_str(&mut a, "nowhere");
+        keys(&mut a, &[KeyCode::Enter]);
+        let s = screen(&mut a);
+        assert!(s.contains("search \"nowhere\" (1)") && s.contains("B.md:3"), "{s}");
+        keys(&mut a, &[KeyCode::Enter]);
+        let s = screen(&mut a);
+        assert!(s.contains("› B.md") && s.contains("match 1/1"), "{s}");
+        keys(&mut a, &[KeyCode::Esc, KeyCode::Esc]);
+        assert!(screen(&mut a).contains("search \"nowhere\""));
+        type_str(&mut a, ":s zzz");
+        keys(&mut a, &[KeyCode::Enter]);
+        assert!(screen(&mut a).contains("no matches"));
+    }
+
+    #[test]
+    fn find_in_note_cycles_matches() {
+        let (d, mut a) = app();
+        std::fs::write(d.path().join("A.md"), "one x\n\ntwo x\n\nthree x").unwrap();
+        a.reload();
+        keys(&mut a, &[KeyCode::Enter, KeyCode::Char('/')]);
+        type_str(&mut a, "X");
+        keys(&mut a, &[KeyCode::Enter]);
+        assert!(screen(&mut a).contains("match 1/3"));
+        keys(&mut a, &[KeyCode::Char('N')]);
+        assert!(screen(&mut a).contains("match 3/3"));
+        keys(&mut a, &[KeyCode::Esc]);
+        assert!(screen(&mut a).contains("/ find"), "esc clears search, stays in note");
     }
 
     #[test]
