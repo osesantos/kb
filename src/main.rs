@@ -1,3 +1,4 @@
+mod git;
 mod md;
 mod tui;
 mod vault;
