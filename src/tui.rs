@@ -1,6 +1,6 @@
 use crate::{
     md::{self, Doc, Link, Seg},
-    vault::Vault,
+    vault::{Target, Vault},
 };
 use ratatui::{
     Frame,
@@ -155,13 +155,21 @@ impl App {
         let Some(r) = &self.reader else { return };
         let Some(f) = r.focus else { return };
         let target = match &r.doc.links[f] {
-            Link::Note(i) => Ok(*i),
-            Link::Name(n) => self.vault.resolve(n).ok_or_else(|| n.clone()),
+            Link::Note(i) => Target::Note(*i),
+            Link::Name(n) => self.vault.target(n),
         };
-        match target {
-            Ok(i) => self.open(i),
-            Err(n) if n.contains("://") => self.status = format!("external link: {n}"),
-            Err(n) => self.status = format!("unresolved: [[{n}]]"),
+        self.status = match target {
+            Target::Note(i) => return self.open(i),
+            Target::File(p) => external(p.as_os_str()),
+            Target::Url(u) => external(u.as_ref()),
+            Target::Missing => format!("unresolved: {}", self.link_name(f)),
+        };
+    }
+
+    fn link_name(&self, f: usize) -> String {
+        match self.reader.as_ref().map(|r| &r.doc.links[f]) {
+            Some(Link::Name(n)) => n.clone(),
+            _ => String::new(),
         }
     }
 
@@ -240,10 +248,25 @@ impl App {
         let footer = match (self.filtering, self.status.is_empty(), self.reader.is_some()) {
             (true, _, _) => Line::from(format!("/{}█", self.filter)),
             (_, false, _) => Line::from(self.status.as_str().yellow()),
-            (_, _, true) => "j/k scroll  tab/S-tab link  ⏎ follow  [ ] history  esc back".dark_gray().into(),
-            (_, _, false) => "j/k move  / filter  ⏎ open  [ ] history  q quit".dark_gray().into(),
+            (_, _, true) => "↑↓ j/k scroll  tab/S-tab link  ⏎ follow  [ ] history  esc back".dark_gray().into(),
+            (_, _, false) => "↑↓ j/k move  / filter  ⏎ open  [ ] history  q quit".dark_gray().into(),
         };
         f.render_widget(footer, foot);
+    }
+}
+
+/// Hands a URL or file to the desktop opener without blocking or touching the terminal.
+fn external(what: &std::ffi::OsStr) -> String {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let spawned = std::process::Command::new(opener)
+        .arg(what)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match spawned {
+        Ok(_) => format!("opened {}", what.to_string_lossy()),
+        Err(e) => format!("{opener} failed: {e}"),
     }
 }
 
@@ -258,4 +281,67 @@ pub fn run(vault: Vault) -> std::io::Result<()> {
             return Ok(());
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("A.md"), "# A\n\nGo to [[B]].").unwrap();
+        std::fs::write(d.path().join("B.md"), "# B\n\nMissing [[Nowhere]].").unwrap();
+        let a = App::new(Vault::load(d.path()));
+        (d, a)
+    }
+
+    fn screen(a: &mut App) -> String {
+        let mut t = Terminal::new(TestBackend::new(40, 20)).unwrap();
+        t.draw(|f| a.draw(f)).unwrap();
+        t.backend().buffer().content().chunks(40).map(|r| r.iter().map(|c| c.symbol()).collect::<String>().trim_end().to_string()).collect::<Vec<_>>().join("\n")
+    }
+
+    fn keys(a: &mut App, ks: &[KeyCode]) {
+        ks.iter().for_each(|&k| {
+            a.key(k);
+            screen(a);
+        });
+    }
+
+    #[test]
+    fn filter_open_follow_and_history() {
+        let (_d, mut a) = app();
+        assert!(screen(&mut a).contains("notes (2/2)"));
+        keys(&mut a, &[KeyCode::Char('/'), KeyCode::Char('a'), KeyCode::Enter, KeyCode::Enter]);
+        assert!(screen(&mut a).contains("› A.md"));
+        keys(&mut a, &[KeyCode::Tab, KeyCode::Enter]);
+        assert!(screen(&mut a).contains("› B.md"));
+        keys(&mut a, &[KeyCode::Char('[')]);
+        assert!(screen(&mut a).contains("› A.md"));
+        keys(&mut a, &[KeyCode::Char(']')]);
+        assert!(screen(&mut a).contains("← A"), "backlinks section missing");
+    }
+
+    #[test]
+    fn unresolved_link_reports_status() {
+        let (_d, mut a) = app();
+        keys(&mut a, &[KeyCode::Char('j'), KeyCode::Enter, KeyCode::Tab, KeyCode::Enter]);
+        assert!(screen(&mut a).contains("unresolved: Nowhere"));
+    }
+
+    #[test]
+    fn arrows_move_like_jk() {
+        let (_d, mut a) = app();
+        keys(&mut a, &[KeyCode::Down, KeyCode::Enter]);
+        assert!(screen(&mut a).contains("› B.md"));
+        keys(&mut a, &[KeyCode::Esc, KeyCode::Up, KeyCode::Enter]);
+        assert!(screen(&mut a).contains("› A.md"));
+    }
+
+    #[test]
+    fn quit_from_list() {
+        let (_d, mut a) = app();
+        assert!(!a.key(KeyCode::Char('q')));
+    }
 }

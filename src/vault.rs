@@ -23,6 +23,16 @@ pub struct Vault {
     pub notes: Vec<Note>,
     pub backlinks: Vec<Vec<usize>>,
     by_name: HashMap<String, Vec<usize>>,
+    files: HashMap<String, PathBuf>,
+}
+
+/// What a link target points at once resolved against the vault.
+#[derive(Debug, PartialEq)]
+pub enum Target {
+    Note(usize),
+    File(PathBuf),
+    Url(String),
+    Missing,
 }
 
 /// Normalises a link target to the case-insensitive basename Obsidian resolves by.
@@ -43,13 +53,18 @@ fn wikilinks(src: &str) -> Vec<String> {
 
 impl Vault {
     pub fn load(root: &Path) -> Vault {
-        let mut notes: Vec<Note> = ignore::WalkBuilder::new(root)
+        let (md, other): (Vec<PathBuf>, Vec<PathBuf>) = ignore::WalkBuilder::new(root)
             .filter_entry(|e| e.file_name() != ".obsidian")
             .build()
             .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
             .map(|e| e.into_path())
-            .filter(|p| p.extension().is_some_and(|x| x == "md"))
-            .collect::<Vec<_>>()
+            .partition(|p| p.extension().is_some_and(|x| x == "md"));
+        let files = other
+            .into_iter()
+            .filter_map(|p| Some((p.file_name()?.to_string_lossy().to_lowercase(), p)))
+            .collect();
+        let mut notes: Vec<Note> = md
             .into_par_iter()
             .filter_map(|p| {
                 let src = std::fs::read_to_string(&p).ok()?;
@@ -63,7 +78,7 @@ impl Vault {
             m.entry(key(&n.title)).or_default().push(i);
             m
         });
-        let mut v = Vault { root: root.to_path_buf(), backlinks: vec![vec![]; notes.len()], notes, by_name };
+        let mut v = Vault { root: root.to_path_buf(), backlinks: vec![vec![]; notes.len()], notes, by_name, files };
         let edges: Vec<(usize, usize)> = v
             .notes
             .iter()
@@ -83,11 +98,82 @@ impl Vault {
         self.by_name.get(&key(target))?.iter().copied().min_by_key(|&i| self.notes[i].path.components().count())
     }
 
+    /// Classifies a raw link target: URL, note, attachment file, or missing.
+    pub fn target(&self, raw: &str) -> Target {
+        if raw.contains("://") || raw.starts_with("mailto:") {
+            return Target::Url(raw.into());
+        }
+        let raw = raw.replace("%20", " ");
+        self.resolve(&raw)
+            .map(Target::Note)
+            .or_else(|| self.files.get(&key(&raw)).cloned().map(Target::File))
+            .unwrap_or(Target::Missing)
+    }
+
     pub fn read(&self, note: usize) -> String {
         std::fs::read_to_string(self.root.join(&self.notes[note].path)).unwrap_or_default()
     }
 
     pub fn name(&self) -> String {
         self.root.file_name().map_or_else(|| self.root.display().to_string(), |n| n.to_string_lossy().into_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn vault(files: &[(&str, &str)]) -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().unwrap();
+        files.iter().for_each(|(p, c)| {
+            let p = dir.path().join(p);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, c).unwrap();
+        });
+        let v = Vault::load(dir.path());
+        (dir, v)
+    }
+
+    fn idx(v: &Vault, path: &str) -> usize {
+        v.notes.iter().position(|n| n.path == Path::new(path)).unwrap()
+    }
+
+    #[test]
+    fn key_strips_path_heading_block_and_extension() {
+        assert_eq!(key("Dir/Some Note.md#Heading"), "some note");
+        assert_eq!(key("Note^block"), "note");
+        assert_eq!(key("img.PNG"), "img.png");
+    }
+
+    #[test]
+    fn resolves_case_insensitive_and_prefers_shallowest() {
+        let (_d, v) = vault(&[("a/b/Dup.md", ""), ("x/Dup.md", ""), ("Other.md", "")]);
+        assert_eq!(v.resolve("dup"), Some(idx(&v, "x/Dup.md")));
+        assert_eq!(v.resolve("OTHER"), Some(idx(&v, "Other.md")));
+        assert_eq!(v.resolve("nope"), None);
+    }
+
+    #[test]
+    fn builds_backlinks_without_self_or_duplicates() {
+        let (_d, v) = vault(&[("A.md", "[[B]] [[B]] [[A]]"), ("B.md", "")]);
+        assert_eq!(v.backlinks[idx(&v, "B.md")], vec![idx(&v, "A.md")]);
+        assert!(v.backlinks[idx(&v, "A.md")].is_empty());
+    }
+
+    #[test]
+    fn classifies_targets() {
+        let (d, v) = vault(&[("N.md", ""), ("Images/Pic One.png", "x")]);
+        assert_eq!(v.target("N"), Target::Note(idx(&v, "N.md")));
+        assert_eq!(v.target("pic one.png"), Target::File(d.path().join("Images/Pic One.png")));
+        assert_eq!(v.target("Pic%20One.png"), Target::File(d.path().join("Images/Pic One.png")));
+        assert_eq!(v.target("https://x.dev"), Target::Url("https://x.dev".into()));
+        assert_eq!(v.target("gone"), Target::Missing);
+    }
+
+    #[test]
+    fn skips_obsidian_dir() {
+        let (_d, v) = vault(&[(".obsidian/x.md", ""), ("n.md", "")]);
+        assert_eq!(v.notes.len(), 1);
     }
 }

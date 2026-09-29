@@ -118,7 +118,7 @@ pub fn render<'a>(src: &str, backlinks: impl Iterator<Item = (usize, &'a str)>) 
             Event::Start(Tag::Emphasis) => b.styles.push(Style::new().italic()),
             Event::Start(Tag::Strong) => b.styles.push(Style::new().bold()),
             Event::Start(Tag::Strikethrough) => b.styles.push(Style::new().crossed_out()),
-            Event::End(TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Image) => {
+            Event::End(TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough) => {
                 b.styles.pop();
             }
             Event::Start(Tag::BlockQuote(_)) => {
@@ -169,9 +169,10 @@ pub fn render<'a>(src: &str, backlinks: impl Iterator<Item = (usize, &'a str)>) 
             Event::Start(Tag::Link { dest_url, .. }) => b.open_link(Link::Name(dest_url.into_string())),
             Event::End(TagEnd::Link) => b.close_link(),
             Event::Start(Tag::Image { dest_url, .. }) => {
-                b.push(format!("[image {dest_url}] "), dim());
-                b.styles.push(dim())
+                b.push("🖼 ", dim());
+                b.open_link(Link::Name(dest_url.into_string()))
             }
+            Event::End(TagEnd::Image) => b.close_link(),
             Event::Text(t) => b.text(&t),
             Event::Code(t) => b.push(t.into_string(), code()),
             Event::SoftBreak => b.text(" "),
@@ -203,6 +204,9 @@ pub fn render<'a>(src: &str, backlinks: impl Iterator<Item = (usize, &'a str)>) 
         });
     }
     b.flush();
+    while b.doc.lines.last().is_some_and(Vec::is_empty) {
+        b.doc.lines.pop();
+    }
     b.doc
 }
 
@@ -227,4 +231,51 @@ pub fn wrap(lines: &[Vec<Seg>], width: usize) -> Vec<Vec<Seg>> {
                 .0
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(lines: &[Vec<Seg>]) -> Vec<String> {
+        lines.iter().map(|l| l.iter().map(|s| s.text.as_str()).collect()).collect()
+    }
+
+    fn names(d: &Doc) -> Vec<String> {
+        d.links.iter().map(|l| match l { Link::Name(n) => n.clone(), Link::Note(i) => format!("#{i}") }).collect()
+    }
+
+    #[test]
+    fn collects_wikilinks_urls_and_images_as_links() {
+        let d = render("See [[A]], [site](https://x.dev) and ![[pic.png]] ![alt](img/b.jpg)", std::iter::empty());
+        assert_eq!(names(&d), ["A", "https://x.dev", "pic.png", "img/b.jpg"]);
+    }
+
+    #[test]
+    fn link_segments_carry_their_anchor() {
+        let d = render("x [[A]] y", std::iter::empty());
+        let anchored: Vec<_> = d.lines[0].iter().filter(|s| s.link == Some(0)).map(|s| s.text.as_str()).collect();
+        assert_eq!(anchored, ["A"]);
+    }
+
+    #[test]
+    fn hides_frontmatter_and_renders_blocks() {
+        let d = render("---\ntitle: t\n---\n# H\n\n- a\n- [x] b\n\n```\ncode\n```", std::iter::empty());
+        assert_eq!(text(&d.lines), ["# H", "", "• a", "• [x] b", "", "  code"]);
+    }
+
+    #[test]
+    fn appends_backlinks_as_note_links() {
+        let d = render("body", [(7, "Other")].into_iter());
+        assert_eq!(names(&d), ["#7"]);
+        assert_eq!(text(&d.lines).last().unwrap(), "← Other");
+    }
+
+    #[test]
+    fn wrap_breaks_on_words_and_keeps_anchors() {
+        let d = render("aaa bbb [[ccc]]", std::iter::empty());
+        let w = wrap(&d.lines, 8);
+        assert_eq!(text(&w), ["aaa bbb ", "ccc"]);
+        assert_eq!(w[1][0].link, Some(0));
+    }
 }

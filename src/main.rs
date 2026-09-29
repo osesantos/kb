@@ -15,7 +15,7 @@ fn stats(root: PathBuf) {
     let v = Vault::load(&root);
     let took = t.elapsed();
     let links: Vec<&String> = v.notes.iter().flat_map(|n| &n.links).collect();
-    let unresolved = links.iter().filter(|l| v.resolve(l).is_none()).count();
+    let unresolved = links.iter().filter(|l| v.target(l) == vault::Target::Missing).count();
     println!("notes       {}", v.notes.len());
     println!("load        {took:?}");
     println!("wikilinks   {}", links.len());
