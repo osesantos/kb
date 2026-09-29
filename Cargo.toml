@@ -1,0 +1,9 @@
+[package]
+name = "kb"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ignore = "0.4.33"
+pulldown-cmark = "0.13.4"
+rayon = "1.12.0"
