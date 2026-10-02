@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -121,4 +122,26 @@ func TestActivityRefreshesOnlyOnGitChanges(t *testing.T) {
 	assert.NotContains(t, screen(m), "second", "a note save does not re-read git history")
 	m.Update(fsMsg{filepath.Join(d, ".git", "index")})
 	assert.Contains(t, screen(m), "second")
+}
+
+func TestAutoCommitStagesCommitsAndPushes(t *testing.T) {
+	d, m := newApp(t)
+	remote := t.TempDir()
+	gitRun(t, remote, "init", "-q", "--bare")
+	gitInit(t, d)
+	gitRun(t, d, "remote", "add", "origin", remote)
+	gitRun(t, d, "config", "push.autoSetupRemote", "true")
+	command(m, "git")
+	_, cmd := m.Update(keyMsg("A"))
+	require.NotNil(t, cmd)
+	assert.Contains(t, screen(m), "working tree clean")
+	runCmd(m, cmd)
+	assert.Contains(t, screen(m), "pushed")
+	out, err := exec.Command("git", "-C", remote, "log", "-1", "--format=%s").Output()
+	require.NoError(t, err)
+	assert.Regexp(t, `^auto-commit: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\n$`, string(out))
+
+	_, cmd = m.Update(keyMsg("A"))
+	assert.Nil(t, cmd)
+	assert.Contains(t, screen(m), "nothing to commit")
 }

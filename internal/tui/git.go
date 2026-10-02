@@ -3,6 +3,8 @@ package tui
 import (
 	"path/filepath"
 	"slices"
+	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -131,15 +133,9 @@ func (g *gitView) key(m *Model, k string) tea.Cmd {
 			return g.result(m, "committed", out, err)
 		}}
 	case "p":
-		if m.pushing {
-			return nil
-		}
-		m.pushing = true
-		m.info("pushing…")
-		return func() tea.Msg {
-			out, err := git.Push(root)
-			return pushedMsg{out, err}
-		}
+		return m.push(root)
+	case "A":
+		return g.autoCommit(m, root)
 	case "e":
 		if ok {
 			return m.editCmd(filepath.Join(g.top, e.Path))
@@ -148,9 +144,39 @@ func (g *gitView) key(m *Model, k string) tea.Cmd {
 	return nil
 }
 
+// push starts a background push unless one is already running.
+func (m *Model) push(root string) tea.Cmd {
+	if m.pushing {
+		return nil
+	}
+	m.pushing = true
+	m.info("pushing…")
+	return func() tea.Msg {
+		out, err := git.Push(root)
+		return pushedMsg{out, err}
+	}
+}
+
+// autoCommit stages everything, commits it as "auto-commit: <local date time>" and pushes.
+func (g *gitView) autoCommit(m *Model, root string) tea.Cmd {
+	if len(g.entries) == 0 {
+		m.info("nothing to commit, working tree clean")
+		return nil
+	}
+	if out, err := git.StageAll(root); err != nil {
+		return g.result(m, "stage all", out, err)
+	}
+	out, err := git.Commit(root, "auto-commit: "+time.Now().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return g.result(m, "auto-commit", out, err)
+	}
+	dirty := g.result(m, "committed", strings.TrimSpace(out), nil)
+	return tea.Batch(dirty, m.push(root))
+}
+
 func (g *gitView) help(right bool) []hint {
 	if right {
 		return []hint{{"j/k", "scroll"}, {"esc", "back"}}
 	}
-	return []hint{{"j/k", "move"}, {"⏎", "diff"}, {"space", "stage/unstage"}, {"a", "stage all"}, {"c", "commit"}, {"p", "push"}, {"e", "edit"}, {"esc", "notes"}}
+	return []hint{{"j/k", "move"}, {"⏎", "diff"}, {"space", "stage/unstage"}, {"a", "stage all"}, {"c", "commit"}, {"p", "push"}, {"A", "auto-commit+push"}, {"e", "edit"}, {"esc", "notes"}}
 }

@@ -18,7 +18,7 @@ k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, nav
 | `[` `]` | history back / forward |
 | `e` | edit in `$VISUAL`/`$EDITOR`; the view reloads on save and on any external change |
 | `s`, `:s words` | BM25 search over sections |
-| `:git` | status, diff, `space` stage, `a` all, `c` commit, `p` push |
+| `:git` | status, diff, `space` stage, `a` all, `c` commit, `p` push, `A` auto-commit (stage all, commit "auto-commit: <date time>", push) |
 | `:activity` | commits touching the vault, attributed by `Agent:` / `Run:` trailers |
 | `:cal` | daily notes for the month (`H/L` month, `t` today, `e` creates) |
 | `:vaults` | switch between configured vaults |
