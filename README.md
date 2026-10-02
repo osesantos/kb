@@ -1,9 +1,55 @@
 # kb
 
-k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, navigate, search and git-operate Markdown vaults shared by humans and AI agents.
+k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, navigate, search and git-operate Markdown vaults shared by humans and AI agents. Go + Bubble Tea, styled like [Overseer](https://github.com/dnlopes/overseer).
 
-**Status:** early. `kb [vault]` opens the TUI (notes list, reader, wikilink follow, back/forward history, backlinks, `e` → `$EDITOR`, live refresh on file changes, `:git` status/diff/stage/commit/push, `:activity` commits with `Agent:`/`Run:` trailers, `:cal` daily notes, `:vaults` switch, `s` vault search, `/` find in note). `kb search [-C vault] [--json] [-n N] [--budget TOKENS] words` returns BM25-ranked sections with line ranges; `--budget` inlines section text until the token budget is spent (exit 1 on no hits). `kb read [-C vault] 'note#heading'` prints one section. `kb stats [vault]` prints load timings and link stats.
+## Install
 
-Install: `cargo install --path . --locked` builds a release binary into `~/.cargo/bin/kb` (on `PATH` wherever rustup is installed); rerun it to update.
+`make install` builds `kb` into `~/.local/bin` (set `BIN=` to change it). Needs Go 1.25+ (`GOTOOLCHAIN=auto` fetches it).
 
-Vaults: `~/.config/kb/config.toml` with `[[vault]] name = "main"`, `path = "~/git/vault"`, optional `[vault.daily] folder, format` (defaults come from `.obsidian/daily-notes.json`). A name works wherever a path does; with no argument kb opens `KB_VAULT`, else the first configured vault.
+## TUI
+
+`kb [vault]` opens a list on the left and a preview on the right.
+
+| Key / command | What it does |
+|---|---|
+| `j/k`, `⏎`, `esc` | move, open / focus preview, back |
+| `/` | filter notes by path (list) or find in note (preview, then `n`/`N`) |
+| `tab` | link picker: the note's links, embeds and backlinks |
+| `[` `]` | history back / forward |
+| `e` | edit in `$VISUAL`/`$EDITOR`; the view reloads on save and on any external change |
+| `s`, `:s words` | BM25 search over sections |
+| `:git` | status, diff, `space` stage, `a` all, `c` commit, `p` push |
+| `:activity` | commits touching the vault, attributed by `Agent:` / `Run:` trailers |
+| `:cal` | daily notes for the month (`H/L` month, `t` today, `e` creates) |
+| `:vaults` | switch between configured vaults |
+| `:notes`, `:q` | back to notes, quit |
+
+## CLI
+
+- `kb search [-C vault] [--json] [-n N] [--budget TOKENS] words` — BM25-ranked `##`/`###` sections with line ranges. `--budget` inlines section text until the token budget is spent. Exit 1 on no hits.
+- `kb read [-C vault] 'note#heading'` — prints one section.
+- `kb stats [vault]` — load time and link stats.
+
+## Config
+
+`~/.config/kb/config.toml`:
+
+```toml
+theme = "dark"   # dark dracula github-dark tokyo-night monokai one-dark solarized-dark nord catppuccin-mocha porcelain deep-sea sunset
+
+[[vault]]
+name = "main"
+path = "~/git/vault"
+
+[vault.daily]            # optional; defaults come from .obsidian/daily-notes.json
+folder = "Journals"
+format = "MMM Do, YYYY"
+```
+
+A vault name works wherever a path does. With no argument kb opens `KB_VAULT`, else the first configured vault, else the current directory.
+
+## Develop
+
+`make test` runs vet and the tests. `KB_VAULT=~/git/vault go test ./internal/search -run Budgets -v` checks the load and query budgets against a real vault.
+
+`internal/tui/styles`, `internal/tui/components` and `markdown.go` are copied from Overseer (MIT) — see `NOTICE`.
