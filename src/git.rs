@@ -94,6 +94,44 @@ pub fn commit(root: &Path, msg: &str) -> Result<String, String> {
     git(root, &["commit", "-q", "-m", msg], &[0]).and_then(|_| git(root, &["log", "-1", "--format=%h %s"], &[0]))
 }
 
+/// A commit touching the vault, with its `Agent:` / `Run:` trailers when the writer set them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Commit {
+    pub hash: String,
+    pub at: i64,
+    pub author: String,
+    pub agent: Option<String>,
+    pub run: Option<String>,
+    pub subject: String,
+}
+
+const LOG_FORMAT: &str = "--format=%h%x1f%at%x1f%an%x1f%(trailers:key=Agent,valueonly,separator=%x2C)%x1f%(trailers:key=Run,valueonly,separator=%x2C)%x1f%s%x1e";
+
+/// Parses records written with `LOG_FORMAT`.
+pub fn parse_log(out: &str) -> Vec<Commit> {
+    let opt = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+    out.split('\x1e')
+        .filter_map(|r| {
+            let f: Vec<&str> = r.trim_start_matches('\n').split('\x1f').collect();
+            let [hash, at, author, agent, run, subject] = f.as_slice() else { return None };
+            Some(Commit { hash: hash.to_string(), at: at.parse().ok()?, author: author.to_string(), agent: opt(agent), run: opt(run), subject: subject.to_string() })
+        })
+        .collect()
+}
+
+/// The latest `n` commits touching files under `root`, newest first; an unborn branch has none.
+pub fn log(root: &Path, n: usize) -> Result<Vec<Commit>, String> {
+    if git(root, &["rev-parse", "-q", "--verify", "HEAD"], &[0]).is_err() {
+        return Ok(vec![]);
+    }
+    git(root, &["log", "-n", &n.to_string(), LOG_FORMAT, "--", "."], &[0]).map(|s| parse_log(&s))
+}
+
+/// Stat and patch of one commit, limited to files under `root`.
+pub fn show(root: &Path, hash: &str) -> Result<String, String> {
+    git(root, &["show", "--no-color", "--stat", "--patch", "--format=%H%n%an  %ad%n%n%B", hash, "--", "."], &[0])
+}
+
 pub fn push(root: &Path) -> Result<String, String> {
     git(root, &["push", "-q"], &[0])
 }
@@ -133,5 +171,24 @@ mod tests {
         assert!(commit(d.path(), "first").unwrap().ends_with("first\n"));
         assert!(status(d.path()).unwrap().is_empty());
         assert!(push(d.path()).is_err());
+    }
+
+    #[test]
+    fn log_reads_trailers_and_scopes_to_root() {
+        let d = tempfile::tempdir().unwrap();
+        init(d.path());
+        assert!(log(d.path(), 10).unwrap().is_empty());
+        std::fs::create_dir(d.path().join("v")).unwrap();
+        std::fs::write(d.path().join("v/n.md"), "hi\n").unwrap();
+        stage_all(d.path()).unwrap();
+        git(d.path(), &["commit", "-q", "-m", "Research: x\n\nbody\n\nAgent: overseer/triage\nRun: r1"], &[0]).unwrap();
+        std::fs::write(d.path().join("out.md"), "x").unwrap();
+        stage_all(d.path()).unwrap();
+        commit(d.path(), "outside the vault").unwrap();
+        let c = log(&d.path().join("v"), 10).unwrap();
+        assert_eq!(c.len(), 1);
+        assert_eq!((c[0].agent.as_deref(), c[0].run.as_deref(), c[0].subject.as_str()), (Some("overseer/triage"), Some("r1"), "Research: x"));
+        assert!(show(&d.path().join("v"), &c[0].hash).unwrap().contains("+hi"));
+        assert_eq!(log(d.path(), 10).unwrap()[0].agent, None);
     }
 }

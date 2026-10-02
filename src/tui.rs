@@ -189,6 +189,27 @@ fn diff_lines(d: &str) -> Vec<Line<'static>> {
         .collect()
 }
 
+/// Scrolls a pager of `len` lines; returns false when it should close.
+fn pager_key(len: usize, scroll: &mut u16, code: KeyCode) -> bool {
+    let max = len as u16;
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') => return false,
+        KeyCode::Char('j') | KeyCode::Down => *scroll = scroll.saturating_add(1).min(max),
+        KeyCode::Char('k') | KeyCode::Up => *scroll = scroll.saturating_sub(1),
+        KeyCode::Char(' ') | KeyCode::PageDown => *scroll = scroll.saturating_add(20).min(max),
+        KeyCode::PageUp => *scroll = scroll.saturating_sub(20),
+        _ => {}
+    }
+    true
+}
+
+/// The `:activity` view: commits touching the vault, attributed by their `Agent:` / `Run:` trailers.
+struct Activity {
+    commits: Vec<git::Commit>,
+    list: ListState,
+    show: Option<(Vec<Line<'static>>, u16)>,
+}
+
 /// The search results view; it sits under the reader so Esc from a hit returns here.
 struct Results {
     query: String,
@@ -226,6 +247,7 @@ impl Cal {
 }
 
 pub struct App {
+    activity: Option<Activity>,
     cfg: Config,
     vaults: Option<ListState>,
     cal: Option<Cal>,
@@ -249,6 +271,7 @@ pub struct App {
 impl App {
     pub fn new(vault: Vault, cfg: Config) -> Self {
         let mut app = App {
+            activity: None,
             cfg,
             vaults: None,
             cal: None,
@@ -281,6 +304,7 @@ impl App {
     }
 
     fn close_views(&mut self) {
+        self.activity = None;
         self.git = None;
         self.vaults = None;
         self.reader = None;
@@ -313,6 +337,52 @@ impl App {
                 None => self.status = format!("no daily note {}  (e creates it)", path.display()),
             },
             KeyCode::Char('e') => self.edit = Some(self.vault.root.join(path)),
+            _ => {}
+        }
+    }
+
+    fn open_activity(&mut self) {
+        self.close_views();
+        self.activity = Some(Activity { commits: vec![], list: ListState::default(), show: None });
+        self.refresh_activity();
+    }
+
+    /// Re-reads the commit log when the activity view is open, keeping the selection by hash.
+    fn refresh_activity(&mut self) {
+        let Some(a) = &mut self.activity else { return };
+        match git::log(&self.vault.root, 200) {
+            Ok(commits) => {
+                let sel = a.list.selected().and_then(|i| a.commits.get(i)).map(|c| c.hash.clone());
+                let idx = sel.and_then(|h| commits.iter().position(|c| c.hash == h)).or((!commits.is_empty()).then_some(0));
+                a.list.select(idx);
+                a.commits = commits;
+            }
+            Err(e) => {
+                self.activity = None;
+                self.status = format!("activity: {e}");
+            }
+        }
+    }
+
+    fn activity_key(&mut self, code: KeyCode) {
+        let Some(a) = &mut self.activity else { return };
+        if let Some((lines, scroll)) = &mut a.show {
+            if !pager_key(lines.len(), scroll, code) {
+                a.show = None;
+            }
+            return;
+        }
+        let sel = a.list.selected().and_then(|i| a.commits.get(i));
+        match (code, sel) {
+            (KeyCode::Esc | KeyCode::Char('q'), _) => self.activity = None,
+            (KeyCode::Char('j') | KeyCode::Down, _) => a.list.select_next(),
+            (KeyCode::Char('k') | KeyCode::Up, _) => a.list.select_previous(),
+            (KeyCode::Char('g'), _) => a.list.select_first(),
+            (KeyCode::Char('G'), _) => a.list.select_last(),
+            (KeyCode::Enter, Some(c)) => match git::show(&self.vault.root, &c.hash) {
+                Ok(d) => a.show = Some((diff_lines(&d), 0)),
+                Err(e) => self.status = e,
+            },
             _ => {}
         }
     }
@@ -357,6 +427,7 @@ impl App {
             return;
         };
         self.vaults = None;
+        self.activity = None;
         self.git = Some(GitView { top, entries: vec![], list: ListState::default(), diff: None });
         self.refresh_git();
     }
@@ -374,13 +445,8 @@ impl App {
         let root = self.vault.root.clone();
         let Some(g) = &mut self.git else { return };
         if let Some((lines, scroll)) = &mut g.diff {
-            match code {
-                KeyCode::Esc | KeyCode::Char('q') => g.diff = None,
-                KeyCode::Char('j') | KeyCode::Down => *scroll = scroll.saturating_add(1).min(lines.len() as u16),
-                KeyCode::Char('k') | KeyCode::Up => *scroll = scroll.saturating_sub(1),
-                KeyCode::Char(' ') | KeyCode::PageDown => *scroll = scroll.saturating_add(20).min(lines.len() as u16),
-                KeyCode::PageUp => *scroll = scroll.saturating_sub(20),
-                _ => {}
+            if !pager_key(lines.len(), scroll, code) {
+                g.diff = None;
             }
             return;
         }
@@ -456,11 +522,12 @@ impl App {
                 ("git" | "g", _) => self.open_git(),
                 ("notes" | "n", _) => self.close_views(),
                 ("cal" | "c", _) => self.open_cal(),
+                ("activity" | "a", _) => self.open_activity(),
                 ("vaults" | "v", _) => self.open_vaults(),
                 ("search" | "s", "") => self.prompt = Some(Prompt::Search(String::new())),
                 ("search" | "s", q) => self.search(q.trim()),
                 ("q" | "quit", _) => self.quit = true,
-                (other, _) => self.status = format!("unknown command: {other}  (notes, search, git, cal, vaults, quit)"),
+                (other, _) => self.status = format!("unknown command: {other}  (notes, search, git, activity, cal, vaults, quit)"),
             },
             Prompt::Commit(m) if m.trim().is_empty() => self.status = "commit aborted: empty message".into(),
             Prompt::Commit(m) => {
@@ -605,6 +672,10 @@ impl App {
             self.vaults_key(code);
             return true;
         }
+        if self.activity.is_some() {
+            self.activity_key(code);
+            return true;
+        }
         if self.reader.is_none() && self.cal.is_some() && !matches!(code, KeyCode::Char('[' | ']')) {
             self.cal_key(code);
             return true;
@@ -650,8 +721,13 @@ impl App {
 
     fn draw(&mut self, f: &mut Frame) {
         let [head, body, foot] = Layout::vertical([Constraint::Length(1), Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
+        let activity = self.activity.as_ref().map(|a| match (&a.show, a.list.selected().and_then(|i| a.commits.get(i))) {
+            (Some(_), Some(c)) => format!("activity › {}", c.hash),
+            _ => format!("activity ({})", a.commits.len()),
+        });
         let crumb = match (&self.git, &self.reader, &self.results) {
             _ if self.vaults.is_some() => format!("vaults ({})", self.cfg.vaults.len()),
+            _ if activity.is_some() => activity.unwrap_or_default(),
             (Some(g), _, _) => {
                 let sel = g.list.selected().and_then(|i| g.entries.get(i));
                 match (&g.diff, sel) {
@@ -671,6 +747,11 @@ impl App {
         f.render_widget(Line::from(vec![" kb ".black().on_cyan().bold(), format!(" {} › {crumb}", self.vault.name()).into(), dirty]), head);
 
         match (&mut self.git, &mut self.reader, &mut self.results) {
+            _ if self.activity.is_some() => {
+                if let Some(a) = &mut self.activity {
+                    draw_activity(a, f, body)
+                }
+            }
             _ if self.vaults.is_some() => {
                 let cur = &self.vault.root;
                 let items = self.cfg.vaults.iter().map(|v| {
@@ -739,15 +820,40 @@ impl App {
             (Some(Prompt::Commit(m)), _, _) => Line::from(vec!["commit message: ".cyan(), format!("{m}█").into()]),
             (_, false, _) => Line::from(self.status.as_str().yellow()),
             _ if self.vaults.is_some() => "↑↓ j/k move  ⏎ switch  esc back".dark_gray().into(),
+            _ if self.activity.is_some() => match self.activity.as_ref().and_then(|a| a.show.as_ref()) {
+                Some(_) => "↑↓ j/k scroll  esc back",
+                None => "↑↓ j/k move  ⏎ show commit  esc back",
+            }
+            .dark_gray()
+            .into(),
             (_, _, (Some(true), _)) => "↑↓ j/k scroll  esc back".dark_gray().into(),
             (_, _, (Some(false), _)) => "↑↓ j/k move  ⏎ diff  space stage/unstage  a stage all  c commit  p push  e edit  esc back".dark_gray().into(),
             (_, _, (_, Some((cur, n, false)))) => format!("match {}/{n}  n/N next/prev  esc clear", if n == 0 { 0 } else { cur + 1 }).dark_gray().into(),
             (_, _, (_, Some(_))) => "↑↓ j/k scroll  / find  tab/S-tab link  ⏎ follow  e edit  [ ] history  esc back".dark_gray().into(),
             _ if self.cal.is_some() => "h/l day  j/k week  H/L month  t today  ⏎ open  e edit/create  esc back".dark_gray().into(),
             _ if self.results.is_some() => "↑↓ j/k move  ⏎ open  s new search  e edit  esc back".dark_gray().into(),
-            _ => "↑↓ j/k move  / filter  s search  ⏎ open  e edit  [ ] history  :git :cal :vaults  q quit".dark_gray().into(),
+            _ => "↑↓ j/k move  / filter  s search  ⏎ open  e edit  [ ] history  :git :activity :cal :vaults  q quit".dark_gray().into(),
         };
         f.render_widget(footer, foot);
+    }
+}
+
+fn draw_activity(a: &mut Activity, f: &mut Frame, body: Rect) {
+    if let Some((lines, scroll)) = &a.show {
+        return f.render_widget(Paragraph::new(lines.clone()).scroll((*scroll, 0)), body);
+    }
+    let items = a.commits.iter().map(|c| {
+        let when = chrono::DateTime::from_timestamp(c.at, 0).map(|t| t.with_timezone(&chrono::Local).format("%b %d %H:%M").to_string()).unwrap_or_default();
+        let who = match (&c.agent, &c.run) {
+            (Some(a), Some(r)) => format!("{a} · {r}").cyan(),
+            (Some(a), None) => a.clone().cyan(),
+            _ => "external".dark_gray(),
+        };
+        Line::from(vec![format!("{when}  ").dark_gray(), who, format!("  {}", c.subject).into()])
+    });
+    f.render_stateful_widget(List::new(items).highlight_style(Style::new().reversed()), body, &mut a.list);
+    if a.commits.is_empty() {
+        f.render_widget("no commits touch this vault yet".dark_gray(), body);
     }
 }
 
@@ -826,6 +932,9 @@ pub fn run(vault: Vault, cfg: Config) -> std::io::Result<()> {
         }
         if !paths.is_empty() {
             app.refresh_git();
+        }
+        if paths.iter().any(|p| p.components().any(|c| c.as_os_str() == ".git")) {
+            app.refresh_activity();
         }
     })
 }
@@ -1040,6 +1149,28 @@ mod tests {
         let s = screen(&mut a);
         assert!(s.contains("switched to two") && s.contains("notes (1/1)"), "{s}");
         assert_eq!(a.vault.root, other.path());
+    }
+
+    #[test]
+    fn activity_attributes_trailers_and_shows_commit() {
+        let (d, mut a) = app();
+        git::init(d.path());
+        git::stage_all(d.path()).unwrap();
+        git::commit(d.path(), "human edit").unwrap();
+        std::fs::write(d.path().join("A.md"), "agent wrote this").unwrap();
+        git::stage_all(d.path()).unwrap();
+        git::commit(d.path(), "Research: x\n\nAgent: overseer\nRun: r7").unwrap();
+        type_str(&mut a, ":activity");
+        keys(&mut a, &[KeyCode::Enter]);
+        let s = screen(&mut a);
+        assert!(s.contains("activity (2)") && s.contains("overseer · r7") && s.contains("external"), "{s}");
+        keys(&mut a, &[KeyCode::Enter]);
+        assert!(screen(&mut a).contains("A.md | 4"));
+        keys(&mut a, &[KeyCode::Char('j'); 6]);
+        let s = screen(&mut a);
+        assert!(s.contains("+agent wrote this"), "{s}");
+        keys(&mut a, &[KeyCode::Esc, KeyCode::Esc]);
+        assert!(screen(&mut a).contains("notes (2/2)"));
     }
 
     #[test]
