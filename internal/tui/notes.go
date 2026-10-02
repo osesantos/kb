@@ -71,6 +71,17 @@ func (n *notesView) selectNote(m *Model, idx int) {
 	n.refilter(m, m.v.Notes[idx].Path)
 }
 
+func (n *notesView) beforeReload(m *Model) func(*Model) {
+	cur := n.currentPath(m)
+	return func(m *Model) {
+		n.refilter(m, cur)
+		if _, ok := m.v.Find(cur); m.right && cur != "" && !ok {
+			m.right = false
+			m.fail("%s was removed", cur)
+		}
+	}
+}
+
 func (n *notesView) crumb(m *Model) string {
 	if p := n.currentPath(m); m.right && p != "" {
 		return p
@@ -171,6 +182,8 @@ func (n *notesView) key(m *Model, k string) tea.Cmd {
 		n.selIdx, m.scroll = 0, 0
 	case "G":
 		n.selIdx, m.scroll = max(len(n.visible)-1, 0), 0
+	case "s":
+		m.prompt = searchPrompt()
 	case "/":
 		m.prompt = &prompt{
 			label: "/", text: n.filter,
@@ -199,22 +212,27 @@ func (n *notesView) key(m *Model, k string) tea.Cmd {
 }
 
 func (n *notesView) rightKey(m *Model, k string, cur int, hasCur bool) tea.Cmd {
-	page := max(m.h-6, 1)
-	switch k {
-	case "esc", "q", "h", "left":
+	if k == "esc" && m.find.query != "" {
+		m.find = find{}
+		return nil
+	}
+	if k == "esc" || k == "q" || k == "h" || k == "left" {
 		m.right = false
-	case "j", "down":
-		m.scroll++
-	case "k", "up":
-		m.scroll = max(m.scroll-1, 0)
-	case "space", "pgdown":
-		m.scroll += page
-	case "pgup":
-		m.scroll = max(m.scroll-page, 0)
-	case "g":
-		m.scroll = 0
-	case "G":
-		m.scroll = 1 << 30
+		if m.returnTo != nil {
+			m.view, m.returnTo, m.find = m.returnTo, nil, find{}
+		}
+		return nil
+	}
+	if m.scrollKey(k) {
+		return nil
+	}
+	switch k {
+	case "/":
+		m.prompt = &prompt{label: "find in note: ", done: func(m *Model, q string) tea.Cmd { m.runFind(q); return nil }}
+	case "n":
+		m.stepFind(1)
+	case "N":
+		m.stepFind(-1)
 	case "tab", "enter":
 		if hasCur {
 			m.picker = newPicker(m, cur)
@@ -233,7 +251,7 @@ func (n *notesView) rightKey(m *Model, k string, cur int, hasCur bool) tea.Cmd {
 
 func (n *notesView) help(right bool) []hint {
 	if right {
-		return []hint{{"j/k", "scroll"}, {"tab", "links"}, {"[ ]", "history"}, {"e", "edit"}, {"esc", "back"}, {":", "command"}}
+		return []hint{{"j/k", "scroll"}, {"/", "find"}, {"tab", "links"}, {"[ ]", "history"}, {"e", "edit"}, {"esc", "back"}}
 	}
-	return []hint{{"j/k", "move"}, {"/", "filter"}, {"⏎", "open"}, {"e", "edit"}, {"[ ]", "history"}, {":", "command"}, {"q", "quit"}}
+	return []hint{{"j/k", "move"}, {"/", "filter"}, {"s", "search"}, {"⏎", "open"}, {"e", "edit"}, {":", "git cal vaults…"}, {"q", "quit"}}
 }

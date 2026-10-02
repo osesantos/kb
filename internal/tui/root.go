@@ -23,7 +23,17 @@ const (
 	listPercent         = 35
 )
 
-type row struct{ text, aux string }
+// row is one list line; styled, when set, replaces text on unselected rows.
+type row struct{ text, aux, styled string }
+
+// reloader is implemented by views that must re-derive their state after the vault reloads;
+// beforeReload runs against the old vault and returns the restore step for the new one.
+type reloader interface {
+	beforeReload(m *Model) (restore func(m *Model))
+}
+
+// refresher is implemented by views backed by git state, refreshed on any filesystem event.
+type refresher interface{ refresh(m *Model) }
 
 type hint struct{ key, desc string }
 
@@ -74,6 +84,19 @@ type Model struct {
 	watch     *vault.Watcher
 	// editing is the path last handed to $EDITOR.
 	editing string
+	// returnTo is the view Esc goes back to after opening a hit from it (search results).
+	returnTo view
+	find     find
+	pushing  bool
+	// rw and rh are the preview pane's inner size from the last layout.
+	rw, rh int
+}
+
+// find is the in-note search: preview lines containing the query and which one is current.
+type find struct {
+	query string
+	hits  []int
+	cur   int
 }
 
 type previewCache struct {
@@ -97,6 +120,16 @@ type (
 		ok bool
 	}
 	editedMsg struct{ err error }
+	pushedMsg struct {
+		out string
+		err error
+	}
+	switchedMsg struct {
+		name string
+		v    *vault.Vault
+		w    *vault.Watcher
+		err  error
+	}
 )
 
 func (m *Model) Init() tea.Cmd { return tea.Batch(m.waitFS(), m.refreshDirty()) }
@@ -149,7 +182,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		if r, ok := m.view.(refresher); ok {
+			r.refresh(m)
+		}
 		return m, tea.Batch(append(cmds, m.refreshDirty())...)
+	case pushedMsg:
+		m.pushing = false
+		if msg.err != nil {
+			m.fail("push failed: %v", msg.err)
+		} else {
+			m.info("pushed %s", strings.TrimSpace(msg.out))
+		}
+		return m, m.refreshDirty()
+	case switchedMsg:
+		if msg.err != nil {
+			m.fail("switch failed: %v", msg.err)
+			return m, nil
+		}
+		if m.watch != nil {
+			_ = m.watch.Close()
+		}
+		m.v, m.watch, m.hist, m.pos, m.gen = msg.v, msg.w, nil, -1, m.gen+1
+		m.view, m.right, m.scroll, m.returnTo, m.find = newNotes(m), false, 0, nil, find{}
+		m.info("switched to %s", msg.name)
+		return m, tea.Batch(m.waitFS(), m.refreshDirty())
 	case reloadedMsg:
 		m.applyReload(msg.v)
 	case editedMsg:
@@ -209,34 +265,47 @@ func (m *Model) promptKey(k string) tea.Cmd {
 
 // runCommand is the `:` resource switch, like k9s.
 func runCommand(m *Model, c string) tea.Cmd {
-	name, _, _ := strings.Cut(c, " ")
+	name, arg, _ := strings.Cut(c, " ")
 	switch name {
 	case "notes", "n":
-		m.view, m.right, m.scroll = newNotes(m), false, 0
+		m.goTo(newNotes(m))
+	case "search", "s":
+		if arg == "" {
+			m.prompt = searchPrompt()
+		} else {
+			m.search(strings.TrimSpace(arg))
+		}
+	case "git", "g":
+		m.openGit()
+	case "activity", "a":
+		m.openActivity()
+	case "cal", "c":
+		m.openCal()
+	case "vaults", "v":
+		m.goTo(newVaults(m))
 	case "q", "quit":
 		return tea.Quit
 	case "":
 	default:
-		m.fail("unknown command: %s  (notes, quit)", name)
+		m.fail("unknown command: %s  (notes, search, git, activity, cal, vaults, quit)", name)
 	}
 	return nil
 }
 
+// goTo replaces the current view, dropping any pending return and in-note find.
+func (m *Model) goTo(v view) {
+	m.view, m.right, m.scroll, m.returnTo, m.find = v, false, 0, nil, find{}
+}
+
 func (m *Model) applyReload(nv *vault.Vault) {
-	cur := ""
-	if n, ok := m.view.(*notesView); ok {
-		cur = n.currentPath(m)
+	var restore func(*Model)
+	if r, ok := m.view.(reloader); ok {
+		restore = r.beforeReload(m)
 	}
 	m.v = nv
 	m.gen++
-	if n, ok := m.view.(*notesView); ok {
-		n.refilter(m, cur)
-		if m.right && cur != "" {
-			if _, ok := nv.Find(cur); !ok {
-				m.right = false
-				m.fail("%s was removed", cur)
-			}
-		}
+	if restore != nil {
+		restore(m)
 	}
 	keep := m.hist[:0:0]
 	for _, p := range m.hist {
@@ -348,6 +417,14 @@ func (m *Model) footer() string {
 		}
 		return m.st.Help.Bar.Width(m.w).Render(style.Render(m.status))
 	}
+	if m.right && m.find.query != "" {
+		n := len(m.find.hits)
+		cur := 0
+		if n > 0 {
+			cur = m.find.cur + 1
+		}
+		return m.helpBar([]hint{{"n/N", "next/prev"}, {"esc", "clear"}, {"", fmt.Sprintf("match %d/%d for %q", cur, n, m.find.query)}})
+	}
 	return m.helpBar(m.view.help(m.right))
 }
 
@@ -384,6 +461,7 @@ func (m *Model) layout() string {
 	left := components.PanelWithTitle(m.st, m.listPane(lw, lh), m.view.listTitle(), !m.right, leftW, bodyH).Content
 
 	rw, rh := components.TitledPanelInnerSize(m.st, m.right, rightW, bodyH)
+	m.rw, m.rh = rw, rh
 	title, lines := m.previewLines(rw)
 	m.scroll = max(min(m.scroll, len(lines)-rh), 0)
 	end := min(m.scroll+rh, len(lines))
@@ -406,6 +484,9 @@ func (m *Model) listPane(w, h int) string {
 	for i := off; i < min(off+h, len(rows)); i++ {
 		r := rows[i]
 		text, aux := ansi.Truncate(r.text, max(w-1, 1), "…"), r.aux
+		if r.styled != "" && i != sel {
+			text = ansi.Truncate(r.styled, max(w-1, 1), "…")
+		}
 		if free := w - lipgloss.Width(text) - 2; aux != "" && free > 3 {
 			aux = "  " + ansi.Truncate(aux, free, "…")
 		} else {
