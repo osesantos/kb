@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/osesantos/kb/internal/search"
 	"github.com/osesantos/kb/internal/tui/components"
@@ -75,9 +74,14 @@ func (m *Model) finderPaste(s string) {
 
 // finderView lays the popup out at about 80% × 75% of the screen: query on top, results left, preview right.
 func (m *Model) finderView() string {
-	f := m.finder
 	w := max(m.w*8/10, 50)
-	h := max(m.h*3/4, 10)
+	return components.Modal(m.st, m.finderContent(w, max(m.h*3/4, 10)), w, 0)
+}
+
+// finderContent is the popup's inside, every cell on the modal background.
+func (m *Model) finderContent(w, h int) string {
+	f := m.finder
+	bg := m.st.Modal.Box.GetBackground()
 	listW := w * 2 / 5
 	prevW := w - listW - 3
 	bodyH := h - 3
@@ -109,13 +113,21 @@ func (m *Model) finderView() string {
 	if f.sel < len(f.hits) {
 		h := f.hits[f.sel]
 		n := &m.v.Notes[h.Note]
-		lines := strings.Split(m.markdown(prevW).Render(wikilinksToText(vault.StripFrontmatter(n.Sections[h.Section].Text(n)))), "\n")
-		preview = m.st.Group.Header.Render(truncate(n.Path, prevW)) + "\n" + truncateLines(strings.Join(lines[:min(len(lines), bodyH-1)], "\n"), prevW)
+		preview = m.st.Group.Header.Render(n.Path) + "\n" + m.markdown(prevW).Render(wikilinksToText(vault.StripFrontmatter(n.Sections[h.Section].Text(n))))
 	}
-	left := lipgloss.NewStyle().Width(listW).Height(bodyH).MaxHeight(bodyH).Render(list)
-	right := lipgloss.NewStyle().Width(prevW).Height(bodyH).MaxHeight(bodyH).Render(preview)
-	sep := m.st.Divider.Horizontal.Render(strings.Repeat("│\n", bodyH-1) + "│")
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, " ", sep, " ", right)
-	help := m.st.Badge.Label.Render("↑↓ move · ⏎ open · tab all results · esc close")
-	return components.Modal(m.st, strings.Join([]string{input, components.HorizontalDivider(m.st, w), body, help}, "\n"), w, 0)
+	fit := func(s string, width int) []string {
+		lines := strings.Split(onBackground(s, bg, width), "\n")
+		blank := onBackground("", bg, width)
+		for len(lines) < bodyH {
+			lines = append(lines, blank)
+		}
+		return lines[:bodyH]
+	}
+	left, right := fit(list, listW), fit(preview, prevW)
+	gap, sep := onBackground(" ", bg, 1), m.st.Divider.Horizontal.Background(bg).Render("│")
+	out := []string{onBackground(input, bg, w), onBackground(components.HorizontalDivider(m.st, w), bg, w)}
+	for i := range bodyH {
+		out = append(out, left[i]+gap+sep+gap+right[i])
+	}
+	return strings.Join(append(out, onBackground(m.st.Badge.Label.Render("↑↓ move · ⏎ open · tab all results · esc close"), bg, w)), "\n")
 }

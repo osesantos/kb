@@ -78,9 +78,16 @@ func (m *Model) pickerKey(k string) tea.Cmd {
 }
 
 func (m *Model) pickerView() string {
+	content, width := m.pickerContent()
+	return components.Modal(m.st, content, width, 0)
+}
+
+// pickerContent is the picker's inside, every cell on the modal background, and its width.
+func (m *Model) pickerContent() (string, int) {
 	p := m.picker
+	bg := m.st.Modal.Box.GetBackground()
 	if len(p.items) == 0 {
-		return components.Modal(m.st, m.st.Empty.Hint.Render("no links in this note"), 30, 0)
+		return onBackground(m.st.Empty.Hint.Render("no links in this note"), bg, 30), 30
 	}
 	h := min(len(p.items), max(m.h-10, 3))
 	off := max(min(p.sel-h/2, len(p.items)-h), 0)
@@ -100,5 +107,5 @@ func (m *Model) pickerView() string {
 		}
 	}
 	lines = append(lines, "", m.st.Badge.Label.Render("⏎ follow · esc close"))
-	return components.Modal(m.st, strings.Join(lines, "\n"), width, 0)
+	return onBackground(strings.Join(lines, "\n"), bg, width), width
 }

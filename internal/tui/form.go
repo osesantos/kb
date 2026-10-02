@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/osesantos/kb/internal/config"
 	"github.com/osesantos/kb/internal/tui/components"
@@ -75,6 +74,12 @@ func (m *Model) formPaste(s string) {
 }
 
 func (m *Model) formView() string {
+	content, width := m.formContent()
+	return components.Modal(m.st, content, width, 0)
+}
+
+// formContent is the form's inside, every cell on the modal background, and its width.
+func (m *Model) formContent() (string, int) {
 	f := m.form
 	st := m.st.Form
 	width := max(min(m.w-12, 64), 30)
@@ -94,10 +99,7 @@ func (m *Model) formView() string {
 		lines = append(lines, st.Error.Render(f.err), st.Input.Render(" "))
 	}
 	lines = append(lines, st.Hint.Render("tab next · ⏎ submit · esc cancel"))
-	for i, l := range lines {
-		lines[i] = lipgloss.NewStyle().Background(m.st.Form.Input.GetBackground()).Width(width).Render(l)
-	}
-	return components.Modal(m.st, strings.Join(lines, "\n"), width, 0)
+	return onBackground(strings.Join(lines, "\n"), m.st.Modal.Box.GetBackground(), width), width
 }
 
 // truncateTail keeps the end of s so the cursor stays visible in a long field.
