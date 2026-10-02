@@ -18,8 +18,7 @@ import (
 func gitInit(t *testing.T, dir string) {
 	t.Helper()
 	for _, a := range [][]string{{"init", "-q"}, {"config", "user.email", "t@t"}, {"config", "user.name", "t"}, {"config", "commit.gpgsign", "false"}} {
-		out, err := exec.Command("git", append([]string{"-C", dir}, a...)...).CombinedOutput()
-		require.NoError(t, err, string(out))
+		gitRun(t, dir, a...)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -76,4 +78,47 @@ func TestHistoryKeepsPointingAtTheSameNoteWhenAnEarlierEntryIsDeleted(t *testing
 	require.NoError(t, os.Remove(filepath.Join(d, "A.md")))
 	m.applyReload(vault.Load(d))
 	assert.Equal(t, "B.md", m.hist[m.pos])
+}
+
+// runCmd executes a command and feeds every resulting message back into the model, like the Bubble Tea runtime.
+func runCmd(m *Model, cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			runCmd(m, c)
+		}
+	case nil:
+	default:
+		_, next := m.Update(msg)
+		runCmd(m, next)
+	}
+}
+
+func TestEditorSaveRefreshesThePreview(t *testing.T) {
+	d, m := newApp(t)
+	press(m, "enter")
+	require.NotNil(t, m.view.key(m, "e"))
+	write(t, d, "A.md", "# A\n\nsaved from the editor")
+	_, cmd := m.Update(editedMsg{})
+	runCmd(m, cmd)
+	s := screen(m)
+	assert.Contains(t, s, "saved from the editor")
+	assert.Contains(t, s, "› A.md")
+}
+
+func TestActivityRefreshesOnlyOnGitChanges(t *testing.T) {
+	d, m := newApp(t)
+	gitInit(t, d)
+	gitRun(t, d, "add", "-A")
+	gitRun(t, d, "commit", "-q", "-m", "first")
+	command(m, "activity")
+	write(t, d, "B.md", "changed")
+	gitRun(t, d, "commit", "-q", "-am", "second")
+	m.Update(fsMsg{filepath.Join(d, "A.md")})
+	assert.NotContains(t, screen(m), "second", "a note save does not re-read git history")
+	m.Update(fsMsg{filepath.Join(d, ".git", "index")})
+	assert.Contains(t, screen(m), "second")
 }

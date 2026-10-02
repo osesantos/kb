@@ -17,6 +17,7 @@ import (
 	"go.abhg.dev/goldmark/wikilink"
 )
 
+// Note is one Markdown file of the vault, with its parsed links and sections.
 type Note struct {
 	// Path is vault-relative and slash-separated.
 	Path  string
@@ -37,6 +38,7 @@ type Vault struct {
 	files     map[string]string
 }
 
+// TargetKind says what a link resolved to.
 type TargetKind int
 
 const (
@@ -77,26 +79,38 @@ func StripFrontmatter(src string) string {
 	return src
 }
 
-// Wikilinks returns the targets of `[[...]]` links (not `![[...]]` embeds), fragment included.
-func Wikilinks(src string) []string {
+// wikiTarget is a wikilink's target with its fragment, as written: `Note#Heading`.
+func wikiTarget(w *wikilink.Node) string {
+	if len(w.Fragment) == 0 {
+		return string(w.Target)
+	}
+	return string(w.Target) + "#" + string(w.Fragment)
+}
+
+// walkLinks parses src (frontmatter excluded) and calls fn for every node; the walker only errors when fn does, and fn never does.
+func walkLinks(src string, fn func(n ast.Node, body []byte)) {
 	body := []byte(StripFrontmatter(src))
-	links := []string{}
 	_ = ast.Walk(md.Parser().Parse(text.NewReader(body)), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if w, ok := n.(*wikilink.Node); ok && entering && !w.Embed {
-			t := string(w.Target)
-			if len(w.Fragment) > 0 {
-				t += "#" + string(w.Fragment)
-			}
-			links = append(links, t)
+		if entering {
+			fn(n, body)
 		}
 		return ast.WalkContinue, nil
+	})
+}
+
+// Wikilinks returns the targets of `[[...]]` links (not `![[...]]` embeds), fragment included.
+func Wikilinks(src string) []string {
+	links := []string{}
+	walkLinks(src, func(n ast.Node, _ []byte) {
+		if w, ok := n.(*wikilink.Node); ok && !w.Embed {
+			links = append(links, wikiTarget(w))
+		}
 	})
 	return links
 }
 
 // RefLinks returns every target a note references, in order and deduplicated: wikilinks, embeds, Markdown links and images.
 func RefLinks(src string) []string {
-	body := []byte(StripFrontmatter(src))
 	seen := map[string]bool{}
 	refs := []string{}
 	add := func(t string) {
@@ -105,17 +119,10 @@ func RefLinks(src string) []string {
 			refs = append(refs, t)
 		}
 	}
-	_ = ast.Walk(md.Parser().Parse(text.NewReader(body)), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
+	walkLinks(src, func(n ast.Node, body []byte) {
 		switch n := n.(type) {
 		case *wikilink.Node:
-			t := string(n.Target)
-			if len(n.Fragment) > 0 {
-				t += "#" + string(n.Fragment)
-			}
-			add(t)
+			add(wikiTarget(n))
 		case *ast.Link:
 			add(string(n.Destination))
 		case *ast.Image:
@@ -123,20 +130,19 @@ func RefLinks(src string) []string {
 		case *ast.AutoLink:
 			add(string(n.URL(body)))
 		}
-		return ast.WalkContinue, nil
 	})
 	return refs
 }
 
-// pathCmp orders paths component by component, as the Rust version did, so `a/x` sorts before `a b/x`.
+// pathCmp orders paths component by component, so `a/x` sorts before `a b/x`.
 func pathCmp(a, b string) int {
 	return strings.Compare(strings.ReplaceAll(a, "/", "\x00"), strings.ReplaceAll(b, "/", "\x00"))
 }
 
-// walk lists files under root, skipping hidden entries.
+// walk lists files under root, skipping hidden entries and anything it cannot read.
 // ponytail: hidden-only skip, no .gitignore parsing; every ignored file in the real vault sits in a hidden dir.
 func walk(root string) (mdFiles, other []string) {
-	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error { // the callback never returns an error
 		switch {
 		case err != nil:
 			return nil
@@ -256,12 +262,7 @@ func (v *Vault) Find(path string) (int, bool) {
 	return slices.BinarySearchFunc(v.Notes, path, func(n Note, p string) int { return pathCmp(n.Path, p) })
 }
 
-// Read returns the note's current content on disk, or "" when it can no longer be read.
-func (v *Vault) Read(note int) string {
-	b, _ := os.ReadFile(filepath.Join(v.Root, v.Notes[note].Path))
-	return string(b)
-}
-
+// Name is the vault's folder name, shown in the titlebar.
 func (v *Vault) Name() string {
 	return filepath.Base(v.Root)
 }

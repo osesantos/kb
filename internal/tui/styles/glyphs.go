@@ -1,13 +1,11 @@
 package styles
 
-// Glyphs are the small symbols used in lists; the plain set avoids emoji-width surprises in some terminals.
+// Glyphs are the small symbols used in lists and the titlebar.
 type Glyphs struct {
-	Note, Folder, Link, Backlink, Dirty, Agent, External, Today, Missing, Cursor string
+	Link, Backlink, Dirty, Today, Missing string
 }
 
-func NewGlyphs(plain bool) Glyphs {
-	if plain {
-		return Glyphs{Note: "·", Folder: "▸", Link: "→", Backlink: "←", Dirty: "±", Agent: "◆", External: "○", Today: "●", Missing: "×", Cursor: "▌"}
-	}
-	return Glyphs{Note: "󰈙", Folder: "", Link: "→", Backlink: "←", Dirty: "±", Agent: "◆", External: "○", Today: "●", Missing: "×", Cursor: "▌"}
+// NewGlyphs returns the plain glyph set; it needs no Nerd Font.
+func NewGlyphs() Glyphs {
+	return Glyphs{Link: "→", Backlink: "←", Dirty: "±", Today: "●", Missing: "×"}
 }

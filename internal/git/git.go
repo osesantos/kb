@@ -4,6 +4,7 @@ package git
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"slices"
@@ -18,11 +19,13 @@ type Entry struct {
 	Path string
 }
 
+// Untracked reports a path git does not know yet.
 func (e Entry) Untracked() bool { return e.X == '?' }
 
 // Staged reports something in the index and nothing left in the worktree.
 func (e Entry) Staged() bool { return e.X != ' ' && e.X != '?' && e.Y == ' ' }
 
+// run executes git in root and returns stdout when the exit code is in ok, else the first stderr line.
 func run(root string, ok []int, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
@@ -35,17 +38,17 @@ func run(root string, ok []int, args ...string) (string, error) {
 	case errors.As(err, &exit):
 		code = exit.ExitCode()
 	case err != nil:
-		return "", errors.New("git: " + err.Error())
+		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}
 	if slices.Contains(ok, code) {
 		return out.String(), nil
 	}
 	for l := range strings.SplitSeq(stderr.String(), "\n") {
 		if strings.TrimSpace(l) != "" {
-			return "", errors.New(strings.TrimSpace(l))
+			return "", fmt.Errorf("git %s: %s", args[0], strings.TrimSpace(l))
 		}
 	}
-	return "", errors.New("git failed")
+	return "", fmt.Errorf("git %s: exit %d", args[0], code)
 }
 
 func topPath(p string) string { return ":(top,literal)" + p }
@@ -67,6 +70,7 @@ func Parse(out string) []Entry {
 	return entries
 }
 
+// Toplevel is the repository root containing root, if any.
 func Toplevel(root string) (string, bool) {
 	out, err := run(root, []int{0}, "rev-parse", "--show-toplevel")
 	return strings.TrimSpace(out), err == nil
@@ -78,6 +82,7 @@ func Status(root string) ([]Entry, error) {
 	return Parse(out), err
 }
 
+// Diff is the staged plus unstaged diff of an entry; untracked files diff against /dev/null.
 func Diff(root string, e Entry) (string, error) {
 	if e.Untracked() {
 		top, ok := Toplevel(root)
@@ -94,12 +99,15 @@ func Diff(root string, e Entry) (string, error) {
 	return staged + unstaged, err
 }
 
+// Stage adds a path (or its deletion) to the index.
 func Stage(root, path string) (string, error) {
 	return run(root, []int{0}, "add", "-A", "--", topPath(path))
 }
 
+// StageAll stages every change under root.
 func StageAll(root string) (string, error) { return run(root, []int{0}, "add", "-A", "--", ".") }
 
+// Unstage removes a path from the index, keeping the worktree.
 func Unstage(root, path string) (string, error) {
 	return run(root, []int{0}, "reset", "-q", "--", topPath(path))
 }
@@ -112,6 +120,7 @@ func Commit(root, msg string) (string, error) {
 	return run(root, []int{0}, "log", "-1", "--format=%h %s")
 }
 
+// Push pushes the current branch; it never prompts, so a missing credential fails fast.
 func Push(root string) (string, error) { return run(root, []int{0}, "push", "-q") }
 
 // LogEntry is a commit touching the vault, with its `Agent:` / `Run:` trailers when the writer set them.
@@ -141,6 +150,9 @@ func ParseLog(out string) []LogEntry {
 
 // Log is the latest n commits touching files under root, newest first; an unborn branch has none.
 func Log(root string, n int) ([]LogEntry, error) {
+	if _, ok := Toplevel(root); !ok {
+		return nil, errors.New("not a git repository")
+	}
 	if _, err := run(root, []int{0}, "rev-parse", "-q", "--verify", "HEAD"); err != nil {
 		return nil, nil
 	}

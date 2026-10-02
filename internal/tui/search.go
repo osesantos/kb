@@ -24,9 +24,6 @@ func (m *Model) search(q string) {
 func (s *searchView) crumb(*Model) string { return fmt.Sprintf("search %q (%d)", s.query, len(s.hits)) }
 func (s *searchView) listTitle() string   { return "Search" }
 func (s *searchView) sel() int            { return s.selIdx }
-func (s *searchView) move(m *Model, d int) {
-	s.selIdx = max(min(s.selIdx+d, len(s.hits)-1), 0)
-}
 
 func (s *searchView) rows(m *Model) []row {
 	rows := make([]row, len(s.hits))
@@ -60,10 +57,7 @@ func (s *searchView) preview(m *Model) (string, string, func(int) string) {
 	n := &m.v.Notes[h.Note]
 	sec := n.Sections[h.Section]
 	return n.Title, fmt.Sprintf("%s|%d", n.Path, h.Section), func(w int) string {
-		if m.md.Width() != w {
-			m.md = m.st.NewMarkdown(w)
-		}
-		return m.md.Render(wikilinksToText(vault.StripFrontmatter(sec.Text(n))))
+		return m.markdown(w).Render(wikilinksToText(vault.StripFrontmatter(sec.Text(n))))
 	}
 }
 
@@ -87,11 +81,7 @@ func (s *searchView) beforeReload(m *Model) func(*Model) {
 func (s *searchView) key(m *Model, k string) tea.Cmd {
 	h, ok := s.hit()
 	if m.right {
-		if k == "esc" || k == "q" || k == "h" || k == "left" {
-			m.right = false
-		} else {
-			m.scrollKey(k)
-		}
+		m.previewKey(k)
 		return nil
 	}
 	if m.moveSel(&s.selIdx, len(s.hits), k) {

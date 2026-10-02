@@ -2,7 +2,6 @@ package tui
 
 import (
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -13,8 +12,6 @@ import (
 	"github.com/osesantos/kb/internal/vault"
 )
 
-func itoa(n int) string { return strconv.Itoa(n) }
-
 type pickItem struct {
 	label  string
 	prefix string
@@ -22,7 +19,7 @@ type pickItem struct {
 	raw    string
 }
 
-// picker is the modal list of a note's outgoing links and backlinks; glamour can't tell us where links sit on screen.
+// picker is the modal list of a note's outgoing links and backlinks.
 type picker struct {
 	items []pickItem
 	sel   int
@@ -71,9 +68,7 @@ func (m *Model) pickerKey(k string) tea.Cmd {
 		switch it.target.Kind {
 		case vault.NoteTarget:
 			m.open(it.target.Note)
-		case vault.FileTarget:
-			m.external(it.target.Path)
-		case vault.URLTarget:
+		case vault.FileTarget, vault.URLTarget:
 			m.external(it.target.Path)
 		default:
 			m.fail("unresolved: %s", it.raw)

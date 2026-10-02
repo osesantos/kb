@@ -24,7 +24,6 @@ type Styles struct {
 	Pane     struct{ Container lipgloss.Style }
 	ListRow  struct{ Normal, Selected, Aux, AuxSelected lipgloss.Style }
 	Group    struct{ Header lipgloss.Style }
-	Danger   lipgloss.Style
 	Modal    struct {
 		Box          lipgloss.Style
 		Overlay      color.Color
@@ -37,23 +36,21 @@ type Styles struct {
 	TooSmall lipgloss.Style
 	Layout   struct{ Box lipgloss.Style }
 	Prompt   struct{ Label, Text lipgloss.Style }
-	Toast    struct{ Good, Warn lipgloss.Style }
+	Toast    struct{ Good lipgloss.Style }
 	// Status styles the one-line message shown in the help bar's place.
 	Status struct{ Info, Error lipgloss.Style }
-	Git    struct{ Staged, Unstaged, Untracked, Added, Removed, Hunk, Meta lipgloss.Style }
+	Git    struct{ Staged, Unstaged, Added, Removed, Hunk, Meta lipgloss.Style }
 	Form   struct{ Title, Label, LabelFocused, Input, Hint, Error lipgloss.Style }
 	Glyphs Glyphs
 }
 
-func New() *Styles { return NewWithTheme("dark", false) }
-
 // NewWithTheme builds Styles from the named theme; unknown names fall back to dark.
-func NewWithTheme(themeName string, disableEmoji bool) *Styles {
+func NewWithTheme(themeName string) *Styles {
 	t := LoadTheme(themeName)
 	fg := func(c color.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
 	helpKey := lipgloss.NewStyle().Foreground(t.Text).Background(t.HelpBarBg).Bold(true)
 
-	s := &Styles{Glyphs: NewGlyphs(disableEmoji)}
+	s := &Styles{Glyphs: NewGlyphs()}
 	s.Border = BorderStyles{
 		Focused:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(t.BorderFocus),
 		Blurred:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(t.Border),
@@ -77,7 +74,6 @@ func NewWithTheme(themeName string, disableEmoji bool) *Styles {
 	s.Form.Input = onModal(t.Text)
 	s.Form.Hint = onModal(t.Muted)
 	s.Form.Error = onModal(t.Warning)
-	s.Danger = fg(t.Danger).Bold(true)
 	s.Modal.Box = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(t.BorderFocus).Background(t.ModalBg).Foreground(t.Text).Padding(1, 3)
 	s.Modal.Overlay = t.OverlayBg
 	s.Modal.OverlayStyle = lipgloss.NewStyle().Background(t.OverlayBg)
@@ -97,12 +93,10 @@ func NewWithTheme(themeName string, disableEmoji bool) *Styles {
 	s.Prompt.Label = fg(t.Accent).Bold(true)
 	s.Prompt.Text = fg(t.Text)
 	s.Toast.Good = fg(t.Accent).Bold(true)
-	s.Toast.Warn = fg(t.Warning).Bold(true)
 	s.Status.Info = fg(t.Accent)
 	s.Status.Error = fg(t.Warning).Bold(true)
 	s.Git.Staged = fg(t.Accent)
 	s.Git.Unstaged = fg(t.Danger)
-	s.Git.Untracked = fg(t.Warning)
 	s.Git.Added = fg(t.Accent)
 	s.Git.Removed = fg(t.Danger)
 	s.Git.Hunk = fg(t.Primary)

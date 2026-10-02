@@ -2,6 +2,7 @@
 package daily
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/osesantos/kb/internal/config"
 )
 
+// Daily is a vault's daily-note convention: the folder and the moment.js filename format.
 type Daily struct {
 	Folder string
 	Format string
@@ -26,17 +28,9 @@ func Resolve(root string, over config.DailyCfg) Daily {
 	if b, err := os.ReadFile(filepath.Join(root, ".obsidian", "daily-notes.json")); err == nil {
 		_ = json.Unmarshal(b, &obs) // a broken file means no Obsidian settings, same as a missing one
 	}
-	pick := func(vals ...string) string {
-		for _, v := range vals {
-			if v != "" {
-				return v
-			}
-		}
-		return ""
-	}
 	return Daily{
-		Folder: strings.Trim(pick(over.Folder, obs.Folder), "/"),
-		Format: pick(over.Format, obs.Format, "YYYY-MM-DD"),
+		Folder: strings.Trim(cmp.Or(over.Folder, obs.Folder), "/"),
+		Format: cmp.Or(over.Format, obs.Format, "YYYY-MM-DD"),
 	}
 }
 

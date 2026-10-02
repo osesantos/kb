@@ -2,9 +2,12 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,8 +35,11 @@ type reloader interface {
 	beforeReload(m *Model) (restore func(m *Model))
 }
 
-// refresher is implemented by views backed by git state, refreshed on any filesystem event.
+// refresher is implemented by views backed by the working tree's git state, refreshed on any filesystem event.
 type refresher interface{ refresh(m *Model) }
+
+// commitWatcher is implemented by views backed by git history, refreshed only when .git changes.
+type commitWatcher interface{ onCommit(m *Model) }
 
 type hint struct{ key, desc string }
 
@@ -43,7 +49,6 @@ type view interface {
 	listTitle() string
 	rows(m *Model) []row
 	sel() int
-	move(m *Model, d int)
 	// preview returns the right pane's title, a cache key for its body, and a renderer for the body at a width.
 	preview(m *Model) (title, key string, body func(width int) string)
 	key(m *Model, k string) tea.Cmd
@@ -109,8 +114,11 @@ type previewCache struct {
 
 // New builds the root model for a vault; watch may be nil (tests).
 func New(cfg config.Config, v *vault.Vault, watch *vault.Watcher) *Model {
-	m := &Model{st: styles.NewWithTheme(cfg.Theme, true), cfg: cfg, cfgPath: config.Path(), v: v, watch: watch, pos: -1}
+	m := &Model{st: styles.NewWithTheme(cfg.Theme), cfg: cfg, cfgPath: config.Path(), v: v, watch: watch, pos: -1}
 	m.view = newNotes(m)
+	if watch != nil && len(watch.Unwatched) > 0 {
+		m.fail("live refresh is off for %d folders (watch limit?)", len(watch.Unwatched))
+	}
 	return m
 }
 
@@ -190,6 +198,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r, ok := m.view.(refresher); ok {
 			r.refresh(m)
 		}
+		if c, ok := m.view.(commitWatcher); ok && slices.ContainsFunc(msg, vault.InGit) {
+			c.onCommit(m)
+		}
 		return m, tea.Batch(append(cmds, m.refreshDirty())...)
 	case pushedMsg:
 		m.pushing = false
@@ -205,12 +216,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.watch != nil {
-			_ = m.watch.Close()
+			_ = m.watch.Close() // the old watcher is discarded either way
 		}
 		m.v, m.watch, m.hist, m.pos, m.gen = msg.v, msg.w, nil, -1, m.gen+1
 		m.picker, m.prompt, m.form = nil, nil, nil
 		m.goTo(newNotes(m))
 		m.info("switched to %s", msg.name)
+		if n := len(msg.w.Unwatched); n > 0 {
+			m.fail("switched to %s; live refresh is off for %d folders", msg.name, n)
+		}
 		return m, tea.Batch(m.waitFS(), m.refreshDirty())
 	case reloadedMsg:
 		if msg.v.Root == m.v.Root {
@@ -380,7 +394,7 @@ func (m *Model) back(d int) {
 }
 
 func (m *Model) editCmd(path string) tea.Cmd {
-	editor := firstNonEmpty(envOr("VISUAL"), envOr("EDITOR"), "vi")
+	editor := cmp.Or(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
 	if err := ensureDir(path); err != nil {
 		m.fail("%v", err)
 		return nil

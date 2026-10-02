@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"slices"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -37,12 +38,8 @@ func (g *gitView) refresh(m *Model) {
 	if e, ok := g.entry(); ok {
 		keep = e.Path
 	}
-	g.entries, g.selIdx = st, 0
-	for i, e := range st {
-		if e.Path == keep {
-			g.selIdx = i
-		}
-	}
+	g.entries = st
+	g.selIdx = max(slices.IndexFunc(st, func(e git.Entry) bool { return e.Path == keep }), 0)
 	m.gen++
 }
 
@@ -57,7 +54,6 @@ func (g *gitView) beforeReload(*Model) func(*Model) { return func(m *Model) { g.
 func (g *gitView) crumb(*Model) string              { return "git" }
 func (g *gitView) listTitle() string                { return "Changes" }
 func (g *gitView) sel() int                         { return g.selIdx }
-func (g *gitView) move(_ *Model, d int)             { g.selIdx = max(min(g.selIdx+d, len(g.entries)-1), 0) }
 
 func (g *gitView) rows(m *Model) []row {
 	rows := make([]row, len(g.entries))
@@ -99,11 +95,7 @@ func (g *gitView) result(m *Model, what string, out string, err error) tea.Cmd {
 
 func (g *gitView) key(m *Model, k string) tea.Cmd {
 	if m.right {
-		if k == "esc" || k == "q" || k == "h" || k == "left" {
-			m.right = false
-		} else {
-			m.scrollKey(k)
-		}
+		m.previewKey(k)
 		return nil
 	}
 	if m.moveSel(&g.selIdx, len(g.entries), k) {

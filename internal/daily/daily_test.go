@@ -28,7 +28,7 @@ func TestFormatsMomentTokens(t *testing.T) {
 		{"YYYY-[W]WW dddd", day(2026, 1, 5), "2026-W02 Monday"},
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, Moment(c.format, c.t), c.format)
+		t.Run(c.want, func(t *testing.T) { assert.Equal(t, c.want, Moment(c.format, c.t)) })
 	}
 }
 

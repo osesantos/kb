@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,17 +121,17 @@ func newVaultForm(m *Model) *form {
 			name, raw := v[0], v[1]
 			real := config.Expand(raw)
 			if st, err := os.Stat(real); err != nil || !st.IsDir() {
-				return &formError{"not a directory: " + raw}
+				return errors.New("not a directory: " + raw)
 			}
 			if name == "" {
 				name = filepath.Base(real)
 			}
 			for _, c := range m.cfg.Vaults {
 				if c.Name == name {
-					return &formError{"a vault named " + name + " already exists"}
+					return errors.New("a vault named " + name + " already exists")
 				}
 				if c.Path == real {
-					return &formError{"that path is already vault " + c.Name}
+					return errors.New("that path is already vault " + c.Name)
 				}
 			}
 			if !filepath.IsAbs(raw) && !strings.HasPrefix(raw, "~") {
@@ -148,7 +149,3 @@ func newVaultForm(m *Model) *form {
 		},
 	}
 }
-
-type formError struct{ msg string }
-
-func (e *formError) Error() string { return e.msg }

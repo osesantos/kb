@@ -3,6 +3,7 @@ package tui
 import (
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -122,8 +123,7 @@ func (n *notesView) preview(m *Model) (string, string, func(int) string) {
 
 var wikiRe = regexp.MustCompile(`(!?)\[\[([^\]|]*)(?:\|([^\]]*))?\]\]`)
 
-// wikilinksToText turns `[[target|alias]]` into bold text, and `![[file]]` into an italic marker, outside code fences,
-// because a Markdown renderer prints wikilinks raw.
+// wikilinksToText turns `[[target|alias]]` into bold text and `![[file]]` into an italic marker, outside code fences.
 // ponytail: inline code containing [[x]] is rewritten too; fences are the common case.
 func wikilinksToText(src string) string {
 	fence := false
@@ -152,13 +152,10 @@ func wikilinksToText(src string) string {
 }
 
 func (m *Model) renderNote(i, width int) string {
-	if m.md.Width() != width {
-		m.md = m.st.NewMarkdown(width)
-	}
 	note := &m.v.Notes[i]
-	out := m.md.Render(wikilinksToText(vault.StripFrontmatter(note.Body)))
+	out := m.markdown(width).Render(wikilinksToText(vault.StripFrontmatter(note.Body)))
 	if bl := m.v.Backlinks[i]; len(bl) > 0 {
-		out += "\n\n" + m.st.Group.Header.Render(m.st.Glyphs.Backlink+" Backlinks ("+itoa(len(bl))+")")
+		out += "\n\n" + m.st.Group.Header.Render(m.st.Glyphs.Backlink+" Backlinks ("+strconv.Itoa(len(bl))+")")
 		for _, b := range bl {
 			out += "\n  " + m.v.Notes[b].Title
 		}

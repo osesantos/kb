@@ -13,12 +13,14 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// Config is the parsed config file.
 type Config struct {
 	Vaults []VaultCfg `toml:"vault"`
 	// Theme names an Overseer palette; empty means the default.
 	Theme string `toml:"theme"`
 }
 
+// VaultCfg is one `[[vault]]` table.
 type VaultCfg struct {
 	Name  string   `toml:"name"`
 	Path  string   `toml:"path"`
@@ -31,8 +33,12 @@ type DailyCfg struct {
 	Format string `toml:"format"`
 }
 
+// home is the user's home directory, or "" when unknown, which leaves `~` paths unresolvable rather than wrong.
 func home() string {
-	h, _ := os.UserHomeDir()
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
 	return h
 }
 
@@ -100,14 +106,15 @@ func (c Config) Daily(root string) DailyCfg {
 	return DailyCfg{}
 }
 
-// AddVault appends a `[[vault]]` table to the config file, creating it if needed.
-// Text is appended rather than the file rewritten, so comments and ordering survive;
-// path is stored as given (keep `~`) so the file stays valid across machines.
+// AddVault appends a `[[vault]]` table to the config file, creating it if needed, so existing comments survive.
 func AddVault(file, name, path string) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-		return err
+		return fmt.Errorf("create config dir: %w", err)
 	}
-	existing, _ := os.ReadFile(file)
+	existing, err := os.ReadFile(file)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s: %w", file, err)
+	}
 	sep := ""
 	switch {
 	case len(existing) == 0:
@@ -118,11 +125,14 @@ func AddVault(file, name, path string) error {
 	}
 	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", file, err)
 	}
 	_, werr := fmt.Fprintf(f, "%s[[vault]]\nname = %s\npath = %s\n", sep, strconv.Quote(name), strconv.Quote(path))
 	if cerr := f.Close(); werr == nil {
 		werr = cerr
 	}
-	return werr
+	if werr != nil {
+		return fmt.Errorf("%s: %w", file, werr)
+	}
+	return nil
 }

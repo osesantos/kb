@@ -57,6 +57,15 @@ func stats(dir string) {
 	fmt.Printf("notes       %d\nload        %v\nwikilinks   %d\nunresolved  %d\n", len(v.Notes), took, links, unresolved)
 }
 
+// intFlag parses a non-negative integer flag value or exits with usage status.
+func intFlag(name, v string) int {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		die(2, "%s wants a non-negative number, got %q", name, v)
+	}
+	return n
+}
+
 // searchCmd is `kb search [-C vault] [--json] [-n limit] [--budget tokens] words...`: grep-like lines by default, JSON for agents.
 func searchCmd(cfg config.Config, args []string) {
 	var vaultArg string
@@ -78,13 +87,10 @@ func searchCmd(cfg config.Config, args []string) {
 		case "-C", "--vault":
 			vaultArg = next()
 		case "-n":
-			if n, err := strconv.Atoi(next()); err == nil {
-				limit = n
-			}
+			limit = intFlag("-n", next())
 		case "--budget":
-			if n, err := strconv.Atoi(next()); err == nil {
-				budget = &n
-			}
+			n := intFlag("--budget", next())
+			budget = &n
 		default:
 			words = append(words, args[i])
 		}

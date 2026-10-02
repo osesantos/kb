@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"github.com/osesantos/kb/internal/tui/styles"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -29,6 +31,24 @@ func (m *Model) scrollKey(k string) bool {
 	return true
 }
 
+// previewKey handles a key while the preview pane is focused: back to the list, or scroll.
+func (m *Model) previewKey(k string) {
+	switch k {
+	case "esc", "q", "h", "left":
+		m.right = false
+	default:
+		m.scrollKey(k)
+	}
+}
+
+// markdown is the glamour renderer for width, rebuilt only when the width changes.
+func (m *Model) markdown(width int) styles.Markdown {
+	if m.md.Width() != width {
+		m.md = m.st.NewMarkdown(width)
+	}
+	return m.md
+}
+
 // moveSel moves a list selection for the standard list keys; it reports whether k was one of them.
 func (m *Model) moveSel(sel *int, n int, k string) bool {
 	switch k {
@@ -47,7 +67,7 @@ func (m *Model) moveSel(sel *int, n int, k string) bool {
 	return true
 }
 
-// runFind highlights nothing but records the preview lines containing q and jumps to the first.
+// runFind records the preview lines containing q and jumps to the first; glamour output cannot be highlighted inline.
 func (m *Model) runFind(q string) {
 	m.find = find{query: q}
 	if strings.TrimSpace(q) == "" {

@@ -26,9 +26,6 @@ func newVaults(m *Model) *vaultsView {
 func (v *vaultsView) crumb(m *Model) string { return fmt.Sprintf("vaults (%d)", len(m.cfg.Vaults)) }
 func (v *vaultsView) listTitle() string     { return "Vaults" }
 func (v *vaultsView) sel() int              { return v.selIdx }
-func (v *vaultsView) move(m *Model, d int) {
-	v.selIdx = max(min(v.selIdx+d, len(m.cfg.Vaults)-1), 0)
-}
 
 func (v *vaultsView) rows(m *Model) []row {
 	rows := make([]row, len(m.cfg.Vaults))

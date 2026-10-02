@@ -37,9 +37,6 @@ func (c *calView) date() time.Time { return c.month.AddDate(0, 0, c.selIdx) }
 func (c *calView) crumb(*Model) string { return "cal" }
 func (c *calView) listTitle() string   { return c.month.Format("January 2006") }
 func (c *calView) sel() int            { return c.selIdx }
-func (c *calView) move(_ *Model, d int) {
-	c.selIdx = max(min(c.selIdx+d, c.days()-1), 0)
-}
 
 func (c *calView) rows(m *Model) []row {
 	rows := make([]row, c.days())
@@ -73,11 +70,7 @@ func (c *calView) preview(m *Model) (string, string, func(int) string) {
 
 func (c *calView) key(m *Model, k string) tea.Cmd {
 	if m.right {
-		if k == "esc" || k == "q" || k == "h" || k == "left" {
-			m.right = false
-		} else {
-			m.scrollKey(k)
-		}
+		m.previewKey(k)
 		return nil
 	}
 	if m.moveSel(&c.selIdx, c.days(), k) {

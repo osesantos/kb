@@ -195,6 +195,6 @@ func JSON(v *vault.Vault, hits []Hit, budget *int) string {
 		}
 		out = append(out, j)
 	}
-	b, _ := json.Marshal(out)
-	return string(b)
+	js, _ := json.Marshal(out) // maps of strings and numbers always marshal
+	return string(js)
 }

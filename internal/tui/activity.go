@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -17,10 +18,11 @@ type activityView struct {
 func (m *Model) openActivity() {
 	a := &activityView{}
 	m.goTo(a)
-	a.refresh(m)
+	a.load(m)
 }
 
-func (a *activityView) refresh(m *Model) {
+// load re-reads the commit log, keeping the selection on the same commit.
+func (a *activityView) load(m *Model) {
 	cs, err := git.Log(m.v.Root, 200)
 	if err != nil {
 		m.goTo(newNotes(m))
@@ -31,12 +33,8 @@ func (a *activityView) refresh(m *Model) {
 	if c, ok := a.commit(); ok {
 		keep = c.Hash
 	}
-	a.commits, a.selIdx = cs, 0
-	for i, c := range cs {
-		if c.Hash == keep {
-			a.selIdx = i
-		}
-	}
+	a.commits = cs
+	a.selIdx = max(slices.IndexFunc(cs, func(c git.LogEntry) bool { return c.Hash == keep }), 0)
 }
 
 func (a *activityView) commit() (git.LogEntry, bool) {
@@ -46,11 +44,10 @@ func (a *activityView) commit() (git.LogEntry, bool) {
 	return a.commits[a.selIdx], true
 }
 
-func (a *activityView) beforeReload(*Model) func(*Model) { return func(m *Model) { a.refresh(m) } }
-func (a *activityView) crumb(*Model) string              { return "activity" }
-func (a *activityView) listTitle() string                { return "Activity" }
-func (a *activityView) sel() int                         { return a.selIdx }
-func (a *activityView) move(_ *Model, d int)             { a.selIdx = max(min(a.selIdx+d, len(a.commits)-1), 0) }
+func (a *activityView) onCommit(m *Model)   { a.load(m) }
+func (a *activityView) crumb(*Model) string { return "activity" }
+func (a *activityView) listTitle() string   { return "Activity" }
+func (a *activityView) sel() int            { return a.selIdx }
 
 func who(c git.LogEntry) string {
 	switch {
@@ -95,11 +92,7 @@ func (a *activityView) preview(m *Model) (string, string, func(int) string) {
 
 func (a *activityView) key(m *Model, k string) tea.Cmd {
 	if m.right {
-		if k == "esc" || k == "q" || k == "h" || k == "left" {
-			m.right = false
-		} else {
-			m.scrollKey(k)
-		}
+		m.previewKey(k)
 		return nil
 	}
 	if m.moveSel(&a.selIdx, len(a.commits), k) {
