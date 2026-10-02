@@ -1,15 +1,23 @@
+mod config;
+mod daily;
 mod git;
 mod md;
 mod search;
 mod tui;
 mod vault;
 
+use config::Config;
 use std::{path::PathBuf, time::Instant};
 use vault::Vault;
 
-fn root(arg: Option<&String>) -> PathBuf {
-    let p = arg.map(PathBuf::from).or_else(|| std::env::var_os("KB_VAULT").map(PathBuf::from)).unwrap_or_else(|| ".".into());
-    p.canonicalize().unwrap_or(p)
+/// Vault to open: the argument, else `KB_VAULT`, else the first configured vault, else `.`; names resolve via config.
+fn root(cfg: &Config, arg: Option<&String>) -> PathBuf {
+    let arg = arg.cloned().or_else(|| std::env::var("KB_VAULT").ok());
+    match (arg, cfg.vaults.first()) {
+        (Some(a), _) => cfg.root(&a),
+        (None, Some(v)) => v.path.clone(),
+        (None, None) => cfg.root("."),
+    }
 }
 
 fn stats(root: PathBuf) {
@@ -25,7 +33,7 @@ fn stats(root: PathBuf) {
 }
 
 /// `kb search [-C vault] [--json] [-n limit] words...`: grep-like lines by default, JSON for agents.
-fn search(args: &[String]) -> std::io::Result<()> {
+fn search(cfg: &Config, args: &[String]) -> std::io::Result<()> {
     let (mut vault, mut json, mut limit, mut words) = (None, false, 20, vec![]);
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -36,7 +44,7 @@ fn search(args: &[String]) -> std::io::Result<()> {
             w => words.push(w),
         }
     }
-    let v = Vault::load(&root(vault));
+    let v = Vault::load(&root(cfg, vault));
     let hits = search::lexical(&v, &words.join(" "), limit);
     if json {
         println!("{}", search::json(&v, &hits));
@@ -51,10 +59,17 @@ fn search(args: &[String]) -> std::io::Result<()> {
 }
 
 fn main() -> std::io::Result<()> {
+    let cfg = Config::load(&config::path()).unwrap_or_else(|e| {
+        eprintln!("kb: {e}");
+        std::process::exit(2)
+    });
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
-        [cmd, rest @ ..] if cmd == "stats" => Ok(stats(root(rest.first()))),
-        [cmd, rest @ ..] if cmd == "search" => search(rest),
-        rest => tui::run(Vault::load(&root(rest.first()))),
+        [cmd, rest @ ..] if cmd == "stats" => {
+            stats(root(&cfg, rest.first()));
+            Ok(())
+        }
+        [cmd, rest @ ..] if cmd == "search" => search(&cfg, rest),
+        rest => tui::run(Vault::load(&root(&cfg, rest.first())), cfg),
     }
 }

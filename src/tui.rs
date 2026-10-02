@@ -1,8 +1,11 @@
 use crate::{
+    config::Config,
+    daily::Daily,
     git, search,
     md::{self, Doc, Link, Seg},
     vault::{Target, Vault},
 };
+use chrono::{Datelike, Days, Months, NaiveDate};
 use ratatui::{
     Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
@@ -193,7 +196,39 @@ struct Results {
     list: ListState,
 }
 
+/// The `:cal` view: a month grid marking which days have a daily note under the vault's convention.
+struct Cal {
+    daily: Daily,
+    cursor: NaiveDate,
+    today: NaiveDate,
+}
+
+impl Cal {
+    fn lines(&self, v: &Vault) -> Vec<Line<'static>> {
+        let first = self.cursor - Days::new(u64::from(self.cursor.day0()));
+        let last = first.checked_add_months(Months::new(1)).and_then(|d| d.pred_opt()).unwrap_or(first);
+        let lead = std::iter::repeat_n([Span::raw(" "), Span::raw("  ")], first.weekday().num_days_from_monday() as usize).flatten();
+        let days = first.iter_days().take_while(|&d| d <= last).flat_map(|d| {
+            let style = if v.find(&self.daily.path(d)).is_some() { Style::new().cyan().bold() } else { Style::new().dark_gray() };
+            let style = if d == self.today { style.underlined() } else { style };
+            let style = if d == self.cursor { style.reversed() } else { style };
+            [Span::raw(" "), Span::styled(format!("{:>2}", d.day()), style)]
+        });
+        let cells: Vec<Span> = lead.chain(days).collect();
+        let path = self.daily.path(self.cursor);
+        let state = if v.find(&path).is_some() { "".into() } else { "  (missing — e creates)".dark_gray() };
+        [Line::from(first.format(" %B %Y").to_string().bold()), Line::from(" Mo Tu We Th Fr Sa Su".dark_gray())]
+            .into_iter()
+            .chain(cells.chunks(14).map(|w| Line::from(w.to_vec())))
+            .chain([Line::default(), Line::from(vec![format!(" {}", path.display()).into(), state])])
+            .collect()
+    }
+}
+
 pub struct App {
+    cfg: Config,
+    vaults: Option<ListState>,
+    cal: Option<Cal>,
     results: Option<Results>,
     vault: Vault,
     filter: String,
@@ -212,8 +247,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(vault: Vault) -> Self {
+    pub fn new(vault: Vault, cfg: Config) -> Self {
         let mut app = App {
+            cfg,
+            vaults: None,
+            cal: None,
             vault,
             filter: String::new(),
             prompt: None,
@@ -235,6 +273,73 @@ impl App {
         app
     }
 
+    fn open_cal(&mut self) {
+        let today = chrono::Local::now().date_naive();
+        let daily = Daily::resolve(&self.vault.root, &self.cfg.daily(&self.vault.root));
+        self.close_views();
+        self.cal = Some(Cal { daily, cursor: today, today });
+    }
+
+    fn close_views(&mut self) {
+        self.git = None;
+        self.vaults = None;
+        self.reader = None;
+        self.results = None;
+        self.cal = None;
+    }
+
+    fn cal_key(&mut self, code: KeyCode) {
+        let Some(c) = &mut self.cal else { return };
+        let d = c.cursor;
+        let moved = match code {
+            KeyCode::Char('h') | KeyCode::Left => d.pred_opt(),
+            KeyCode::Char('l') | KeyCode::Right => d.succ_opt(),
+            KeyCode::Char('k') | KeyCode::Up => d.checked_sub_days(Days::new(7)),
+            KeyCode::Char('j') | KeyCode::Down => d.checked_add_days(Days::new(7)),
+            KeyCode::Char('H') => d.checked_sub_months(Months::new(1)),
+            KeyCode::Char('L') => d.checked_add_months(Months::new(1)),
+            KeyCode::Char('t') => Some(c.today),
+            _ => None,
+        };
+        if let Some(m) = moved {
+            c.cursor = m;
+            return;
+        }
+        let path = c.daily.path(d);
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') => self.cal = None,
+            KeyCode::Enter => match self.vault.find(&path) {
+                Some(i) => self.open(i),
+                None => self.status = format!("no daily note {}  (e creates it)", path.display()),
+            },
+            KeyCode::Char('e') => self.edit = Some(self.vault.root.join(path)),
+            _ => {}
+        }
+    }
+
+    fn open_vaults(&mut self) {
+        let cur = self.cfg.vaults.iter().position(|v| v.path == self.vault.root);
+        self.close_views();
+        self.vaults = Some(ListState::default().with_selected(cur.or((!self.cfg.vaults.is_empty()).then_some(0))));
+    }
+
+    fn vaults_key(&mut self, code: KeyCode) {
+        let Some(l) = &mut self.vaults else { return };
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') => self.vaults = None,
+            KeyCode::Char('j') | KeyCode::Down => l.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => l.select_previous(),
+            KeyCode::Enter => {
+                if let Some(v) = l.selected().and_then(|i| self.cfg.vaults.get(i)).cloned() {
+                    let cfg = std::mem::take(&mut self.cfg);
+                    *self = App::new(Vault::load(&v.path), cfg);
+                    self.status = format!("switched to {}", v.name);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Re-reads git status for the header count and, when open, the git view (selection kept by path).
     fn refresh_git(&mut self) {
         let status = git::status(&self.vault.root);
@@ -251,6 +356,7 @@ impl App {
             self.status = "not a git repository".into();
             return;
         };
+        self.vaults = None;
         self.git = Some(GitView { top, entries: vec![], list: ListState::default(), diff: None });
         self.refresh_git();
     }
@@ -348,15 +454,13 @@ impl App {
             Prompt::Search(q) => self.search(q.trim()),
             Prompt::Command(c) => match c.trim().split_once(' ').unwrap_or((c.trim(), "")) {
                 ("git" | "g", _) => self.open_git(),
-                ("notes" | "n", _) => {
-                    self.git = None;
-                    self.reader = None;
-                    self.results = None;
-                }
+                ("notes" | "n", _) => self.close_views(),
+                ("cal" | "c", _) => self.open_cal(),
+                ("vaults" | "v", _) => self.open_vaults(),
                 ("search" | "s", "") => self.prompt = Some(Prompt::Search(String::new())),
                 ("search" | "s", q) => self.search(q.trim()),
                 ("q" | "quit", _) => self.quit = true,
-                (other, _) => self.status = format!("unknown command: {other}  (git, notes, search, quit)"),
+                (other, _) => self.status = format!("unknown command: {other}  (notes, search, git, cal, vaults, quit)"),
             },
             Prompt::Commit(m) if m.trim().is_empty() => self.status = "commit aborted: empty message".into(),
             Prompt::Commit(m) => {
@@ -458,8 +562,7 @@ impl App {
         let hits = search::lexical(&self.vault, q, 500);
         let mut list = ListState::default();
         list.select((!hits.is_empty()).then_some(0));
-        self.git = None;
-        self.reader = None;
+        self.close_views();
         self.results = Some(Results { query: q.into(), hits, list });
     }
 
@@ -496,6 +599,14 @@ impl App {
         }
         if self.git.is_some() {
             self.git_key(code);
+            return true;
+        }
+        if self.vaults.is_some() {
+            self.vaults_key(code);
+            return true;
+        }
+        if self.reader.is_none() && self.cal.is_some() && !matches!(code, KeyCode::Char('[' | ']')) {
+            self.cal_key(code);
             return true;
         }
         if self.reader.is_none() && self.results.is_some() && !matches!(code, KeyCode::Char('[' | ']')) {
@@ -540,6 +651,7 @@ impl App {
     fn draw(&mut self, f: &mut Frame) {
         let [head, body, foot] = Layout::vertical([Constraint::Length(1), Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
         let crumb = match (&self.git, &self.reader, &self.results) {
+            _ if self.vaults.is_some() => format!("vaults ({})", self.cfg.vaults.len()),
             (Some(g), _, _) => {
                 let sel = g.list.selected().and_then(|i| g.entries.get(i));
                 match (&g.diff, sel) {
@@ -549,6 +661,7 @@ impl App {
             }
             (_, Some(r), _) => self.vault.notes[r.note].path.display().to_string(),
             (_, _, Some(s)) => format!("search \"{}\" ({})", s.query, s.hits.len()),
+            _ if self.cal.is_some() => "cal".into(),
             _ => format!("notes ({}/{})", self.visible.len(), self.vault.notes.len()),
         };
         let dirty = match self.dirty {
@@ -558,6 +671,19 @@ impl App {
         f.render_widget(Line::from(vec![" kb ".black().on_cyan().bold(), format!(" {} › {crumb}", self.vault.name()).into(), dirty]), head);
 
         match (&mut self.git, &mut self.reader, &mut self.results) {
+            _ if self.vaults.is_some() => {
+                let cur = &self.vault.root;
+                let items = self.cfg.vaults.iter().map(|v| {
+                    let mark = if &v.path == cur { "● " } else { "  " };
+                    Line::from(vec![mark.cyan(), v.name.as_str().bold(), format!("  {}", v.path.display()).dark_gray()])
+                });
+                if let Some(l) = &mut self.vaults {
+                    f.render_stateful_widget(List::new(items).highlight_style(Style::new().reversed()), body, l);
+                }
+                if self.cfg.vaults.is_empty() {
+                    f.render_widget(format!("no [[vault]] entries in {}", crate::config::path().display()).dark_gray(), body);
+                }
+            }
             (Some(g), _, _) => match &g.diff {
                 Some((lines, scroll)) => f.render_widget(Paragraph::new(lines.clone()).scroll((*scroll, 0)), body),
                 None => {
@@ -589,6 +715,11 @@ impl App {
                     f.render_widget("no matches".dark_gray(), body);
                 }
             }
+            _ if self.cal.is_some() => {
+                if let Some(c) = &self.cal {
+                    f.render_widget(Paragraph::new(c.lines(&self.vault)), body);
+                }
+            }
             _ => {
                 let items = self.visible.iter().map(|&i| {
                     let n = &self.vault.notes[i];
@@ -607,12 +738,14 @@ impl App {
             (Some(Prompt::Command(c)), _, _) => Line::from(format!(":{c}█")),
             (Some(Prompt::Commit(m)), _, _) => Line::from(vec!["commit message: ".cyan(), format!("{m}█").into()]),
             (_, false, _) => Line::from(self.status.as_str().yellow()),
+            _ if self.vaults.is_some() => "↑↓ j/k move  ⏎ switch  esc back".dark_gray().into(),
             (_, _, (Some(true), _)) => "↑↓ j/k scroll  esc back".dark_gray().into(),
             (_, _, (Some(false), _)) => "↑↓ j/k move  ⏎ diff  space stage/unstage  a stage all  c commit  p push  e edit  esc back".dark_gray().into(),
             (_, _, (_, Some((cur, n, false)))) => format!("match {}/{n}  n/N next/prev  esc clear", if n == 0 { 0 } else { cur + 1 }).dark_gray().into(),
             (_, _, (_, Some(_))) => "↑↓ j/k scroll  / find  tab/S-tab link  ⏎ follow  e edit  [ ] history  esc back".dark_gray().into(),
+            _ if self.cal.is_some() => "h/l day  j/k week  H/L month  t today  ⏎ open  e edit/create  esc back".dark_gray().into(),
             _ if self.results.is_some() => "↑↓ j/k move  ⏎ open  s new search  e edit  esc back".dark_gray().into(),
-            _ => "↑↓ j/k move  / filter  s search  ⏎ open  e edit  [ ] history  :git  q quit".dark_gray().into(),
+            _ => "↑↓ j/k move  / filter  s search  ⏎ open  e edit  [ ] history  :git :cal :vaults  q quit".dark_gray().into(),
         };
         f.render_widget(footer, foot);
     }
@@ -638,9 +771,12 @@ fn relevant(p: &std::path::Path) -> bool {
     !p.components().any(|c| c.as_os_str() == ".git" || c.as_os_str() == ".obsidian")
 }
 
-/// Suspends the TUI, runs `$VISUAL`/`$EDITOR` (may contain args) on `path`, then restores it.
+/// Suspends the TUI, runs `$VISUAL`/`$EDITOR` (may contain args) on `path`, then restores it; creates missing parent dirs so new notes can be saved.
 fn edit(term: &mut ratatui::DefaultTerminal, path: &std::path::Path) -> Option<String> {
     let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     ratatui::restore();
     let status = std::process::Command::new("sh").arg("-c").arg(format!("{editor} \"$1\"")).arg("sh").arg(path).status();
     *term = ratatui::init();
@@ -651,7 +787,7 @@ fn edit(term: &mut ratatui::DefaultTerminal, path: &std::path::Path) -> Option<S
     }
 }
 
-pub fn run(vault: Vault) -> std::io::Result<()> {
+pub fn run(vault: Vault, cfg: Config) -> std::io::Result<()> {
     use notify_debouncer_full::{DebounceEventResult, new_debouncer, notify::RecursiveMode};
     use std::time::Duration;
 
@@ -659,8 +795,14 @@ pub fn run(vault: Vault) -> std::io::Result<()> {
     let mut watcher = new_debouncer(Duration::from_millis(200), None, tx).map_err(std::io::Error::other)?;
     watcher.watch(&vault.root, RecursiveMode::Recursive).map_err(std::io::Error::other)?;
 
-    let mut app = App::new(vault);
+    let mut watched = vault.root.clone();
+    let mut app = App::new(vault, cfg);
     ratatui::run(|term| loop {
+        if app.vault.root != watched {
+            let _ = watcher.unwatch(&watched);
+            watcher.watch(&app.vault.root, RecursiveMode::Recursive).map_err(std::io::Error::other)?;
+            watched = app.vault.root.clone();
+        }
         term.draw(|f| app.draw(f))?;
         if let Some(path) = app.edit.take() {
             let err = edit(term, &path);
@@ -697,7 +839,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join("A.md"), "# A\n\nGo to [[B]].").unwrap();
         std::fs::write(d.path().join("B.md"), "# B\n\nMissing [[Nowhere]].").unwrap();
-        let a = App::new(Vault::load(d.path()));
+        let a = App::new(Vault::load(d.path()), Config::default());
         (d, a)
     }
 
@@ -858,6 +1000,46 @@ mod tests {
         assert!(screen(&mut a).contains("match 3/3"));
         keys(&mut a, &[KeyCode::Esc]);
         assert!(screen(&mut a).contains("/ find"), "esc clears search, stays in note");
+    }
+
+    #[test]
+    fn cal_opens_today_from_obsidian_convention_and_offers_create() {
+        let (d, mut a) = app();
+        let today = chrono::Local::now().date_naive();
+        std::fs::create_dir_all(d.path().join(".obsidian")).unwrap();
+        std::fs::write(d.path().join(".obsidian/daily-notes.json"), r#"{"folder":"J","format":"YYYY-MM-DD"}"#).unwrap();
+        std::fs::create_dir(d.path().join("J")).unwrap();
+        std::fs::write(d.path().join(format!("J/{today}.md")), "today").unwrap();
+        a.reload();
+        type_str(&mut a, ":cal");
+        keys(&mut a, &[KeyCode::Enter]);
+        let s = screen(&mut a);
+        assert!(s.contains(&today.format("%B %Y").to_string()) && s.contains(&format!("J/{today}.md")), "{s}");
+        keys(&mut a, &[KeyCode::Enter]);
+        assert!(screen(&mut a).contains(&format!("› J/{today}.md")));
+        keys(&mut a, &[KeyCode::Esc, KeyCode::Char('l'), KeyCode::Enter]);
+        let tomorrow = today.succ_opt().unwrap();
+        assert!(screen(&mut a).contains("no daily note"));
+        keys(&mut a, &[KeyCode::Char('e')]);
+        assert_eq!(a.edit, Some(d.path().join(format!("J/{tomorrow}.md"))));
+    }
+
+    #[test]
+    fn vaults_lists_config_and_switches() {
+        let (d, a) = app();
+        let other = tempfile::tempdir().unwrap();
+        std::fs::write(other.path().join("Z.md"), "z").unwrap();
+        let vault = |name: &str, p: &std::path::Path| crate::config::VaultCfg { name: name.into(), path: p.to_path_buf(), daily: Default::default() };
+        let cfg = Config { vaults: vec![vault("one", d.path()), vault("two", other.path())] };
+        let mut a = App::new(a.vault, cfg);
+        type_str(&mut a, ":vaults");
+        keys(&mut a, &[KeyCode::Enter]);
+        let s = screen(&mut a);
+        assert!(s.contains("vaults (2)") && s.contains("● one") && s.contains("two"), "{s}");
+        keys(&mut a, &[KeyCode::Down, KeyCode::Enter]);
+        let s = screen(&mut a);
+        assert!(s.contains("switched to two") && s.contains("notes (1/1)"), "{s}");
+        assert_eq!(a.vault.root, other.path());
     }
 
     #[test]

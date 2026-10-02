@@ -113,6 +113,11 @@ impl Vault {
             .unwrap_or(Target::Missing)
     }
 
+    /// Index of the note at a vault-relative path; notes are kept sorted by path.
+    pub fn find(&self, path: &Path) -> Option<usize> {
+        self.notes.binary_search_by(|n| n.path.as_path().cmp(path)).ok()
+    }
+
     pub fn read(&self, note: usize) -> String {
         std::fs::read_to_string(self.root.join(&self.notes[note].path)).unwrap_or_default()
     }
