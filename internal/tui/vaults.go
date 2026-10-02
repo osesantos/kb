@@ -23,9 +23,9 @@ func newVaults(m *Model) *vaultsView {
 	return v
 }
 
-func (v *vaultsView) crumb(m *Model) string { return fmt.Sprintf("vaults (%d)", len(m.cfg.Vaults)) }
-func (v *vaultsView) listTitle() string     { return "Vaults" }
-func (v *vaultsView) sel() int              { return v.selIdx }
+func (v *vaultsView) crumb(m *Model) string          { return fmt.Sprintf("vaults (%d)", len(m.cfg.Vaults)) }
+func (v *vaultsView) listTitle() string              { return "Vaults" }
+func (v *vaultsView) list(m *Model, w, h int) string { return m.listPane(w, h, v.rows(m), v.selIdx) }
 
 func (v *vaultsView) rows(m *Model) []row {
 	rows := make([]row, len(m.cfg.Vaults))

@@ -1,5 +1,5 @@
 kb includes code copied from Overseer (github.com/dnlopes/overseer):
-internal/tui/styles/theme*.go, markdown.go and internal/tui/components/.
+internal/tui/styles/theme*.go, markdown.go and internal/tui/components/ (tree.go extended by kb).
 
 MIT License
 

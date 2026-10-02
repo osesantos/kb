@@ -21,9 +21,9 @@ func (m *Model) search(q string) {
 	m.goTo(&searchView{query: q, hits: search.Lexical(m.v, q, 500)})
 }
 
-func (s *searchView) crumb(*Model) string { return fmt.Sprintf("search %q (%d)", s.query, len(s.hits)) }
-func (s *searchView) listTitle() string   { return "Search" }
-func (s *searchView) sel() int            { return s.selIdx }
+func (s *searchView) crumb(*Model) string            { return fmt.Sprintf("search %q (%d)", s.query, len(s.hits)) }
+func (s *searchView) listTitle() string              { return "Search" }
+func (s *searchView) list(m *Model, w, h int) string { return m.listPane(w, h, s.rows(m), s.selIdx) }
 
 func (s *searchView) rows(m *Model) []row {
 	rows := make([]row, len(s.hits))

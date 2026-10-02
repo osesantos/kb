@@ -53,7 +53,7 @@ func (g *gitView) entry() (git.Entry, bool) {
 func (g *gitView) beforeReload(*Model) func(*Model) { return func(m *Model) { g.refresh(m) } }
 func (g *gitView) crumb(*Model) string              { return "git" }
 func (g *gitView) listTitle() string                { return "Changes" }
-func (g *gitView) sel() int                         { return g.selIdx }
+func (g *gitView) list(m *Model, w, h int) string   { return m.listPane(w, h, g.rows(m), g.selIdx) }
 
 func (g *gitView) rows(m *Model) []row {
 	rows := make([]row, len(g.entries))

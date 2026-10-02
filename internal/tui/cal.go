@@ -34,9 +34,9 @@ func (c *calView) days() int { return c.month.AddDate(0, 1, -1).Day() }
 
 func (c *calView) date() time.Time { return c.month.AddDate(0, 0, c.selIdx) }
 
-func (c *calView) crumb(*Model) string { return "cal" }
-func (c *calView) listTitle() string   { return c.month.Format("January 2006") }
-func (c *calView) sel() int            { return c.selIdx }
+func (c *calView) crumb(*Model) string            { return "cal" }
+func (c *calView) listTitle() string              { return c.month.Format("January 2006") }
+func (c *calView) list(m *Model, w, h int) string { return m.listPane(w, h, c.rows(m), c.selIdx) }
 
 func (c *calView) rows(m *Model) []row {
 	rows := make([]row, c.days())

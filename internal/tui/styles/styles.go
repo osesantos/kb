@@ -7,6 +7,9 @@ import (
 	"image/color"
 )
 
+// ListIndentUnit is the column count per nesting level in tree views.
+const ListIndentUnit = 2
+
 type BorderStyles struct {
 	Focused, Blurred         lipgloss.Style
 	CharFocused, CharBlurred lipgloss.Style

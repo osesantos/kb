@@ -44,10 +44,10 @@ func (a *activityView) commit() (git.LogEntry, bool) {
 	return a.commits[a.selIdx], true
 }
 
-func (a *activityView) onCommit(m *Model)   { a.load(m) }
-func (a *activityView) crumb(*Model) string { return "activity" }
-func (a *activityView) listTitle() string   { return "Activity" }
-func (a *activityView) sel() int            { return a.selIdx }
+func (a *activityView) onCommit(m *Model)              { a.load(m) }
+func (a *activityView) crumb(*Model) string            { return "activity" }
+func (a *activityView) listTitle() string              { return "Activity" }
+func (a *activityView) list(m *Model, w, h int) string { return m.listPane(w, h, a.rows(m), a.selIdx) }
 
 func who(c git.LogEntry) string {
 	switch {

@@ -3,54 +3,78 @@ package tui
 import (
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/osesantos/kb/internal/tui/components"
 	"github.com/osesantos/kb/internal/vault"
 )
 
-// notesView lists the vault's notes (filterable by path) and previews the selected one.
+// notesView shows the vault's notes as a folder tree (filterable by path) and previews the selected note.
 type notesView struct {
-	filter  string
-	visible []int
-	selIdx  int
+	filter string
+	tree   components.TreeModel[treeItem]
+	// saved is the expansion before a filter auto-expanded the tree; Esc restores it.
+	saved map[string]bool
 }
 
 func newNotes(m *Model) *notesView {
-	n := &notesView{}
+	st := m.st
+	n := &notesView{tree: components.NewTree(func(it treeItem, _, depth, width int, kids, open, focused bool) string {
+		text := components.TreePrefix(depth, kids, open) + it.name
+		switch {
+		case focused:
+			return st.ListRow.Selected.Width(width).Render(truncate(text, width))
+		case it.note < 0:
+			return st.Group.Header.Render(truncate(text, width))
+		}
+		return st.ListRow.Normal.Render(truncate(text, width))
+	})}
 	n.refilter(m, "")
 	return n
 }
 
-// refilter recomputes the visible notes from the filter and keeps the selection on keep (a note path) when still shown.
-func (n *notesView) refilter(m *Model, keep string) {
+// matching lists the notes whose path contains every filter word.
+func (n *notesView) matching(m *Model) []int {
 	words := strings.Fields(strings.ToLower(n.filter))
-	n.visible = n.visible[:0]
+	out := []int{}
 	for i, note := range m.v.Notes {
 		p := strings.ToLower(note.Path)
-		ok := true
-		for _, w := range words {
-			ok = ok && strings.Contains(p, w)
-		}
-		if ok {
-			n.visible = append(n.visible, i)
+		if !slices.ContainsFunc(words, func(w string) bool { return !strings.Contains(p, w) }) {
+			out = append(out, i)
 		}
 	}
-	n.selIdx = 0
-	for si, i := range n.visible {
-		if m.v.Notes[i].Path == keep {
-			n.selIdx = si
-		}
+	return out
+}
+
+// refilter rebuilds the tree from the filter and reveals keep (a note path) when it is still shown.
+// A filter expands everything so matches are visible; clearing it restores the earlier expansion.
+func (n *notesView) refilter(m *Model, keep string) {
+	n.tree = n.tree.SetNodes(buildNoteTree(m.v.Notes, n.matching(m)))
+	switch {
+	case n.filter != "" && n.saved == nil:
+		n.saved = n.tree.Expansion()
+		n.tree = n.tree.ExpandAll()
+	case n.filter != "":
+		n.tree = n.tree.ExpandAll()
+	case n.saved != nil:
+		n.tree = n.tree.WithExpansion(n.saved)
+		n.saved = nil
+	}
+	if keep != "" {
+		n.tree = n.tree.Reveal(keep)
 	}
 }
 
 func (n *notesView) current() (int, bool) {
-	if n.selIdx < 0 || n.selIdx >= len(n.visible) {
+	it, ok := n.tree.Selected()
+	if !ok || it.note < 0 {
 		return 0, false
 	}
-	return n.visible[n.selIdx], true
+	return it.note, true
 }
 
 func (n *notesView) currentPath(m *Model) string {
@@ -60,26 +84,29 @@ func (n *notesView) currentPath(m *Model) string {
 	return ""
 }
 
-// selectNote moves the selection to a note, clearing the filter when it hides that note.
+// selectNote moves the selection to a note, expanding its folders and clearing the filter when it hides that note.
 func (n *notesView) selectNote(m *Model, idx int) {
-	for si, i := range n.visible {
-		if i == idx {
-			n.selIdx = si
-			return
-		}
+	path := m.v.Notes[idx].Path
+	if n.tree = n.tree.Reveal(path); n.tree.SelectedID() == path {
+		return
 	}
 	n.filter = ""
-	n.refilter(m, m.v.Notes[idx].Path)
+	n.refilter(m, path)
 }
 
 func (n *notesView) beforeReload(m *Model) func(*Model) {
-	cur := n.currentPath(m)
+	cur := n.tree.SelectedID()
+	note := n.currentPath(m)
 	return func(m *Model) {
-		n.refilter(m, cur)
-		if _, ok := m.v.Find(cur); m.right && cur != "" && !ok {
-			m.right = false
-			m.fail("%s was removed", cur)
+		n.tree = n.tree.SetNodes(buildNoteTree(m.v.Notes, n.matching(m)))
+		if _, ok := m.v.Find(note); note != "" && !ok {
+			if m.right {
+				m.right = false
+				m.fail("%s was removed", note)
+			}
+			return
 		}
+		n.tree = n.tree.Reveal(cur)
 	}
 }
 
@@ -92,33 +119,33 @@ func (n *notesView) crumb(m *Model) string {
 
 func (n *notesView) listTitle() string { return "Notes" }
 
-func (n *notesView) rows(m *Model) []row {
-	rows := make([]row, len(n.visible))
-	for si, i := range n.visible {
-		note := m.v.Notes[i]
-		dir := filepath.Dir(note.Path)
-		if dir == "." {
-			dir = ""
-		}
-		rows[si] = row{text: note.Title, aux: dir}
+func (n *notesView) list(_ *Model, w, h int) string {
+	if n.tree.RowCount() == 0 {
+		return ""
 	}
-	return rows
-}
-
-func (n *notesView) sel() int { return n.selIdx }
-
-func (n *notesView) move(m *Model, d int) {
-	n.selIdx = max(min(n.selIdx+d, len(n.visible)-1), 0)
-	m.scroll = 0
+	n.tree = n.tree.SetSize(w, h)
+	return n.tree.View()
 }
 
 func (n *notesView) preview(m *Model) (string, string, func(int) string) {
-	i, ok := n.current()
-	if !ok {
-		return "Preview", "none", func(int) string { return "" }
+	if i, ok := n.current(); ok {
+		note := &m.v.Notes[i]
+		return note.Title, note.Path, func(w int) string { return m.renderNote(i, w) }
 	}
-	note := &m.v.Notes[i]
-	return note.Title, note.Path, func(w int) string { return m.renderNote(i, w) }
+	it, ok := n.tree.Selected()
+	if !ok {
+		return "Preview", "none", func(int) string { return m.st.Empty.Hint.Render("no notes match") }
+	}
+	id := n.tree.SelectedID()
+	return it.name, "dir|" + id, func(int) string {
+		count := 0
+		for _, note := range m.v.Notes {
+			if strings.HasPrefix(note.Path, id+"/") {
+				count++
+			}
+		}
+		return m.st.Group.Header.Render(id+"/") + "\n\n" + m.st.Empty.Hint.Render(strconv.Itoa(count)+" notes · l expand · h collapse")
+	}
 }
 
 var wikiRe = regexp.MustCompile(`(!?)\[\[([^\]|]*)(?:\|([^\]]*))?\]\]`)
@@ -172,13 +199,15 @@ func (n *notesView) key(m *Model, k string) tea.Cmd {
 	case "q":
 		return tea.Quit
 	case "j", "down":
-		n.move(m, 1)
+		n.tree, _ = n.tree.MoveCursor(1)
+		m.scroll = 0
 	case "k", "up":
-		n.move(m, -1)
+		n.tree, _ = n.tree.MoveCursor(-1)
+		m.scroll = 0
 	case "g":
-		n.selIdx, m.scroll = 0, 0
+		n.tree, m.scroll = n.tree.SelectIndex(0), 0
 	case "G":
-		n.selIdx, m.scroll = max(len(n.visible)-1, 0), 0
+		n.tree, m.scroll = n.tree.SelectIndex(n.tree.RowCount()-1), 0
 	case "s":
 		m.prompt = searchPrompt()
 	case "/":
@@ -192,9 +221,25 @@ func (n *notesView) key(m *Model, k string) tea.Cmd {
 			n.filter = ""
 			n.refilter(m, n.currentPath(m))
 		}
-	case "enter", "l", "right":
-		if hasCur {
+	case "l", "right", "enter":
+		id, _, kids, open, ok := n.tree.Current()
+		switch {
+		case !ok:
+		case kids && (k == "enter" || !open):
+			n.tree = n.tree.SetExpanded(id, !open)
+		case kids:
+			n.tree, _ = n.tree.MoveCursor(1)
+		case hasCur:
 			m.open(cur)
+		}
+	case "h", "left":
+		id, _, kids, open, ok := n.tree.Current()
+		switch {
+		case !ok:
+		case kids && open:
+			n.tree = n.tree.SetExpanded(id, false)
+		case n.tree.ParentID(id) != "":
+			n.tree = n.tree.SelectID(n.tree.ParentID(id))
 		}
 	case "e":
 		if hasCur {
@@ -250,5 +295,5 @@ func (n *notesView) help(right bool) []hint {
 	if right {
 		return []hint{{"j/k", "scroll"}, {"/", "find"}, {"tab", "links"}, {"[ ]", "history"}, {"e", "edit"}, {"esc", "back"}}
 	}
-	return []hint{{"j/k", "move"}, {"/", "filter"}, {"s", "search"}, {"⏎", "open"}, {"e", "edit"}, {":", "git cal vaults…"}, {"q", "quit"}}
+	return []hint{{"j/k", "move"}, {"l/h", "open/close"}, {"/", "filter"}, {"s", "search"}, {"e", "edit"}, {":", "git cal vaults…"}, {"q", "quit"}}
 }

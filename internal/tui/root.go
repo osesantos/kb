@@ -47,8 +47,8 @@ type hint struct{ key, desc string }
 type view interface {
 	crumb(m *Model) string
 	listTitle() string
-	rows(m *Model) []row
-	sel() int
+	// list renders the left pane's content at the given inner size.
+	list(m *Model, w, h int) string
 	// preview returns the right pane's title, a cache key for its body, and a renderer for the body at a width.
 	preview(m *Model) (title, key string, body func(width int) string)
 	key(m *Model, k string) tea.Cmd
@@ -508,7 +508,7 @@ func (m *Model) layout() string {
 	rightW := m.w - leftW
 
 	lw, lh := components.TitledPanelInnerSize(m.st, !m.right, leftW, bodyH)
-	left := components.PanelWithTitle(m.st, m.listPane(lw, lh), m.view.listTitle(), !m.right, leftW, bodyH).Content
+	left := components.PanelWithTitle(m.st, m.view.list(m, lw, lh), m.view.listTitle(), !m.right, leftW, bodyH).Content
 
 	rw, rh := components.TitledPanelInnerSize(m.st, m.right, rightW, bodyH)
 	m.rw, m.rh = rw, rh
@@ -523,12 +523,10 @@ func (m *Model) layout() string {
 }
 
 // listPane renders the visible window of the view's rows, keeping the selection in sight.
-func (m *Model) listPane(w, h int) string {
-	rows := m.view.rows(m)
+func (m *Model) listPane(w, h int, rows []row, sel int) string {
 	if len(rows) == 0 {
 		return components.CenteredContent(m.st, m.st.Empty.Hint.Render("nothing here"), w, h)
 	}
-	sel := m.view.sel()
 	off := max(min(sel-h/2, len(rows)-h), 0)
 	lines := []string{}
 	for i := off; i < min(off+h, len(rows)); i++ {
