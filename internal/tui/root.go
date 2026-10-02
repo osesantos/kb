@@ -25,6 +25,8 @@ import (
 const (
 	minWidth, minHeight = 60, 12
 	listPercent         = 35
+	// notesPercent is the narrower left column of the notes view (tree + board), never under notesMinWidth.
+	notesPercent, notesMinWidth = 18, 24
 )
 
 // row is one list line; styled, when set, replaces text on unselected rows.
@@ -513,20 +515,25 @@ func (m *Model) helpBar(hints []hint) string {
 func (m *Model) layout() string {
 	bodyH := max(m.h-2, 1)
 	leftW := m.w * listPercent / 100
+	if _, ok := m.view.(*notesView); ok {
+		leftW = max(m.w*notesPercent/100, notesMinWidth)
+	}
 	rightW := m.w - leftW
 
 	listH := bodyH
 	_, notes := m.view.(*notesView)
 	showBoard := notes && boardFits(bodyH)
+	boardH := max(bodyH/2, boardHeight)
 	if showBoard {
-		listH = bodyH - boardHeight
+		listH = bodyH - boardH
 	}
 	listFocus := !m.right && !(showBoard && m.board.focus)
 	lw, lh := components.TitledPanelInnerSize(m.st, listFocus, leftW, listH)
 	left := components.PanelWithTitle(m.st, m.view.list(m, lw, lh), m.view.listTitle(), listFocus, leftW, listH).Content
 	if showBoard {
 		boardFocus := !m.right && m.board.focus
-		left = lipgloss.JoinVertical(lipgloss.Left, left, components.PanelWithTitle(m.st, m.boardView(), m.boardTitle(), boardFocus, leftW, boardHeight).Content)
+		bw, bh := components.TitledPanelInnerSize(m.st, boardFocus, leftW, boardH)
+		left = lipgloss.JoinVertical(lipgloss.Left, left, components.PanelWithTitle(m.st, m.boardView(bw, bh), m.boardTitle(), boardFocus, leftW, boardH).Content)
 	}
 
 	rw, rh := components.TitledPanelInnerSize(m.st, m.right, rightW, bodyH)

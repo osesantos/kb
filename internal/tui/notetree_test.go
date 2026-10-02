@@ -39,8 +39,8 @@ func TestBuildNoteTreeFoldersFirstCaseInsensitive(t *testing.T) {
 		include []int
 		want    []string
 	}{
-		{"all", all, []string{"Alpha", "  sub", "    d", "  c", "alpha2", "  e", "zeta", "  x", "A", "b"}},
-		{"subset keeps only the folders of included notes", []int{0, 4}, []string{"Alpha", "  sub", "    d", "b"}},
+		{"all", all, []string{"Alpha", "  sub", "    d.md", "  c.md", "alpha2", "  e.md", "zeta", "  x.md", "A.md", "b.md"}},
+		{"subset keeps only the folders of included notes", []int{0, 4}, []string{"Alpha", "  sub", "    d.md", "b.md"}},
 		{"none", nil, []string{}},
 	}
 	for _, c := range cases {

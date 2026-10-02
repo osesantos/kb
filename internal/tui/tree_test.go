@@ -2,13 +2,16 @@ package tui
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/osesantos/kb/internal/config"
+	"github.com/osesantos/kb/internal/tui/styles"
 	"github.com/osesantos/kb/internal/vault"
 )
 
@@ -71,4 +74,22 @@ func TestFilterExpandsMatchesAndEscRestores(t *testing.T) {
 	s = screen(m)
 	assert.Contains(t, s, "▶ plans", "esc restores the collapsed tree")
 	assert.Contains(t, s, "Zeta")
+}
+
+func TestNotesColumnIsNarrowAndFoldersUsePrimary(t *testing.T) {
+	_, m := treeApp(t)
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
+	colOf := func() int {
+		top := strings.Split(screen(m), "\n")[1]
+		return utf8.RuneCountInString(top[:strings.Index(top, "╮")]) + 1
+	}
+	notesW := colOf()
+	assert.Equal(t, 36, notesW, "18% of 200 columns")
+	command(m, "s alpha")
+	searchW := colOf()
+	assert.Equal(t, 70, searchW, "other views keep 35%")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	command(m, "notes")
+	assert.Equal(t, 24, colOf(), "never under 24 columns")
+	assert.Equal(t, styles.LoadTheme("dark").Primary, m.st.Folder.GetForeground())
 }

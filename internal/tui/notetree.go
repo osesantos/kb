@@ -34,7 +34,7 @@ func buildNoteTree(notes []vault.Note, include []int) []noteNode {
 			}
 			d = d.dirs[p]
 		}
-		d.files = append(d.files, noteNode{ID: notes[i].Path, Item: treeItem{name: notes[i].Title, note: i}})
+		d.files = append(d.files, noteNode{ID: notes[i].Path, Item: treeItem{name: parts[len(parts)-1], note: i}})
 	}
 	byName := func(a, b noteNode) int {
 		return cmp.Or(cmp.Compare(strings.ToLower(a.Item.name), strings.ToLower(b.Item.name)), cmp.Compare(a.ID, b.ID))

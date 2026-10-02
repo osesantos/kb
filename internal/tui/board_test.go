@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,15 +44,15 @@ func TestBoardDrawsWeekdayRowsWeekColumnsAndLegend(t *testing.T) {
 	_, m := newApp(t)
 	m.board = board{month: time.Date(2026, 10, 1, 0, 0, 0, 0, time.Local), day: 2, loaded: true, focus: true,
 		created: map[int][]string{2: {"a.md", "b.md"}, 5: {"c.md"}}}
-	lines := strings.Split(ansi.Strip(m.boardView()), "\n")
+	lines := strings.Split(ansi.Strip(m.boardView(40, 9)), "\n")
 	require.Len(t, lines, 9)
 	assert.True(t, strings.HasPrefix(lines[0], "Mon "))
 	assert.True(t, strings.HasPrefix(lines[2], "Wed "))
 	assert.Equal(t, "Mon   ■ ■ ■ ■", strings.TrimRight(lines[0], " "), "Oct 2026 starts on a Thursday, so week 1 has no Monday")
 	assert.Equal(t, "    ■ ■ ■ ■ ■", strings.TrimRight(lines[3], " "), "Thursdays: 1, 8, 15, 22, 29")
 	assert.Contains(t, lines[7], "Less")
-	assert.Contains(t, lines[8], "Fri 2 Oct · 2 created")
-	assert.Equal(t, "October 2026 · 3 created", m.boardTitle())
+	assert.Contains(t, lines[8], "Fri 2 Oct · 2 new")
+	assert.Equal(t, "October 2026 · 3", m.boardTitle())
 }
 
 func boardApp(t *testing.T) (string, *Model) {
@@ -106,4 +107,15 @@ func TestBoardRecountsOnFileEvents(t *testing.T) {
 	_, cmd := m.Update(fsMsg{filepath.Join(d, "brand new.md")})
 	runCmd(m, cmd)
 	assert.Equal(t, n+1, m.board.total())
+}
+
+func TestBoardTakesHalfTheLeftColumnAndSpacesRows(t *testing.T) {
+	_, m := boardApp(t)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	lines := strings.Split(screen(m), "\n")
+	top := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "─ "+time.Now().Format("January 2006")) })
+	require.Positive(t, top)
+	assert.InDelta(t, 19, top, 2, "board starts about halfway down the 38-row body")
+	assert.Len(t, strings.Split(ansi.Strip(m.boardView(40, 20)), "\n"), 7+7+2, "one blank line under each weekday when there is room")
+	assert.Len(t, strings.Split(ansi.Strip(m.boardView(40, 9)), "\n"), 9)
 }

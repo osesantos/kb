@@ -27,6 +27,7 @@ type Styles struct {
 	Pane     struct{ Container lipgloss.Style }
 	ListRow  struct{ Normal, Selected, Aux, AuxSelected lipgloss.Style }
 	Group    struct{ Header lipgloss.Style }
+	Folder   lipgloss.Style
 	Modal    struct {
 		Box          lipgloss.Style
 		Overlay      color.Color
@@ -75,6 +76,7 @@ func NewWithTheme(themeName string) *Styles {
 	s.ListRow.Aux = fg(t.Muted)
 	s.ListRow.AuxSelected = fg(t.Subtext).Background(t.SelectionBg)
 	s.Group.Header = fg(t.Accent).Bold(true)
+	s.Folder = fg(t.Primary).Bold(true)
 	onModal := func(c color.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c).Background(t.ModalBg) }
 	s.Form.Title = onModal(t.Primary).Bold(true)
 	s.Form.Label = onModal(t.Subtext)
