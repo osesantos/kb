@@ -133,6 +133,9 @@ func newVaultForm(m *Model) *form {
 					return &formError{"that path is already vault " + c.Name}
 				}
 			}
+			if !filepath.IsAbs(raw) && !strings.HasPrefix(raw, "~") {
+				raw = real
+			}
 			if err := config.AddVault(m.cfgPath, name, raw); err != nil {
 				return err
 			}

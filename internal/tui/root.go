@@ -118,8 +118,9 @@ type (
 	fsMsg       []string
 	reloadedMsg struct{ v *vault.Vault }
 	dirtyMsg    struct {
-		n  int
-		ok bool
+		root string
+		n    int
+		ok   bool
 	}
 	editedMsg struct{ err error }
 	pushedMsg struct {
@@ -154,7 +155,7 @@ func (m *Model) refreshDirty() tea.Cmd {
 	root := m.v.Root
 	return func() tea.Msg {
 		st, err := git.Status(root)
-		return dirtyMsg{n: len(st), ok: err == nil}
+		return dirtyMsg{root: root, n: len(st), ok: err == nil}
 	}
 }
 
@@ -175,7 +176,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 	case dirtyMsg:
-		m.dirty, m.dirtyOK = msg.n, msg.ok
+		if msg.root == m.v.Root {
+			m.dirty, m.dirtyOK = msg.n, msg.ok
+		}
 	case fsMsg:
 		cmds := []tea.Cmd{m.waitFS()}
 		for _, p := range msg {
@@ -205,11 +208,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.watch.Close()
 		}
 		m.v, m.watch, m.hist, m.pos, m.gen = msg.v, msg.w, nil, -1, m.gen+1
-		m.view, m.right, m.scroll, m.returnTo, m.find = newNotes(m), false, 0, nil, find{}
+		m.picker, m.prompt, m.form = nil, nil, nil
+		m.goTo(newNotes(m))
 		m.info("switched to %s", msg.name)
 		return m, tea.Batch(m.waitFS(), m.refreshDirty())
 	case reloadedMsg:
-		m.applyReload(msg.v)
+		if msg.v.Root == m.v.Root {
+			m.applyReload(msg.v)
+		}
 	case editedMsg:
 		if msg.err != nil {
 			m.fail("editor: %v", msg.err)
@@ -308,24 +314,41 @@ func (m *Model) goTo(v view) {
 	m.view, m.right, m.scroll, m.returnTo, m.find = v, false, 0, nil, find{}
 }
 
+// applyReload swaps in a freshly loaded vault and remaps every note index the UI holds: the current view,
+// the view Esc returns to, the open link picker and the history.
 func (m *Model) applyReload(nv *vault.Vault) {
-	var restore func(*Model)
-	if r, ok := m.view.(reloader); ok {
-		restore = r.beforeReload(m)
+	restores := []func(*Model){}
+	for _, v := range []view{m.view, m.returnTo} {
+		if r, ok := v.(reloader); ok {
+			restores = append(restores, r.beforeReload(m))
+		}
+	}
+	pickSel := -1
+	if m.picker != nil {
+		pickSel = m.picker.sel
 	}
 	m.v = nv
 	m.gen++
-	if restore != nil {
+	for _, restore := range restores {
 		restore(m)
 	}
-	keep := m.hist[:0:0]
-	for _, p := range m.hist {
-		if _, ok := nv.Find(p); ok {
-			keep = append(keep, p)
+	m.picker = nil
+	if n, ok := m.view.(*notesView); ok && pickSel >= 0 {
+		if cur, ok := n.current(); ok {
+			m.picker = newPicker(m, cur)
+			m.picker.sel = min(pickSel, max(len(m.picker.items)-1, 0))
 		}
 	}
-	m.hist = keep
-	m.pos = min(m.pos, len(m.hist)-1)
+	keep, pos := m.hist[:0:0], -1
+	for i, p := range m.hist {
+		if _, ok := nv.Find(p); ok {
+			keep = append(keep, p)
+			if i <= m.pos {
+				pos = len(keep) - 1
+			}
+		}
+	}
+	m.hist, m.pos = keep, pos
 }
 
 // open shows a note in the preview pane, focuses it and records it in the history.
@@ -342,7 +365,7 @@ func (m *Model) show(idx int) {
 		m.view = newNotes(m)
 	}
 	m.view.(*notesView).selectNote(m, idx)
-	m.right, m.scroll = true, 0
+	m.right, m.scroll, m.find = true, 0, find{}
 }
 
 func (m *Model) back(d int) {
