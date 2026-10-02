@@ -1,0 +1,154 @@
+// Package git wraps the git CLI so signing, hooks and credential helpers behave as the user configured them.
+package git
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"os/exec"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// Entry is one `git status` line: index (X) and worktree (Y) state of a path.
+type Entry struct {
+	X, Y byte
+	// Path is relative to the repository top level.
+	Path string
+}
+
+func (e Entry) Untracked() bool { return e.X == '?' }
+
+// Staged reports something in the index and nothing left in the worktree.
+func (e Entry) Staged() bool { return e.X != ' ' && e.X != '?' && e.Y == ' ' }
+
+func run(root string, ok []int, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	var out, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &stderr
+	err := cmd.Run()
+	code := 0
+	var exit *exec.ExitError
+	switch {
+	case errors.As(err, &exit):
+		code = exit.ExitCode()
+	case err != nil:
+		return "", errors.New("git: " + err.Error())
+	}
+	if slices.Contains(ok, code) {
+		return out.String(), nil
+	}
+	for l := range strings.SplitSeq(stderr.String(), "\n") {
+		if strings.TrimSpace(l) != "" {
+			return "", errors.New(strings.TrimSpace(l))
+		}
+	}
+	return "", errors.New("git failed")
+}
+
+func topPath(p string) string { return ":(top,literal)" + p }
+
+// Parse reads `git status --porcelain=v1 -z`; rename and copy records carry an extra source path that is skipped.
+func Parse(out string) []Entry {
+	entries := []Entry{}
+	recs := strings.Split(out, "\x00")
+	for i := 0; i < len(recs); i++ {
+		r := recs[i]
+		if len(r) <= 3 {
+			continue
+		}
+		entries = append(entries, Entry{X: r[0], Y: r[1], Path: r[3:]})
+		if r[0] == 'R' || r[0] == 'C' {
+			i++
+		}
+	}
+	return entries
+}
+
+func Toplevel(root string) (string, bool) {
+	out, err := run(root, []int{0}, "rev-parse", "--show-toplevel")
+	return strings.TrimSpace(out), err == nil
+}
+
+// Status lists changes under root only, so a vault inside a larger repo shows just its own files.
+func Status(root string) ([]Entry, error) {
+	out, err := run(root, []int{0}, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".")
+	return Parse(out), err
+}
+
+func Diff(root string, e Entry) (string, error) {
+	if e.Untracked() {
+		top, ok := Toplevel(root)
+		if !ok {
+			top = root
+		}
+		return run(top, []int{0, 1}, "diff", "--no-color", "--no-index", "--", "/dev/null", e.Path)
+	}
+	staged, err := run(root, []int{0}, "diff", "--no-color", "--cached", "--", topPath(e.Path))
+	if err != nil {
+		return "", err
+	}
+	unstaged, err := run(root, []int{0}, "diff", "--no-color", "--", topPath(e.Path))
+	return staged + unstaged, err
+}
+
+func Stage(root, path string) (string, error) {
+	return run(root, []int{0}, "add", "-A", "--", topPath(path))
+}
+
+func StageAll(root string) (string, error) { return run(root, []int{0}, "add", "-A", "--", ".") }
+
+func Unstage(root, path string) (string, error) {
+	return run(root, []int{0}, "reset", "-q", "--", topPath(path))
+}
+
+// Commit commits the index and returns the new commit's short hash and subject.
+func Commit(root, msg string) (string, error) {
+	if _, err := run(root, []int{0}, "commit", "-q", "-m", msg); err != nil {
+		return "", err
+	}
+	return run(root, []int{0}, "log", "-1", "--format=%h %s")
+}
+
+func Push(root string) (string, error) { return run(root, []int{0}, "push", "-q") }
+
+// LogEntry is a commit touching the vault, with its `Agent:` / `Run:` trailers when the writer set them.
+type LogEntry struct {
+	Hash, Author, Agent, Run, Subject string
+	At                                int64
+}
+
+const logFormat = "--format=%h%x1f%at%x1f%an%x1f%(trailers:key=Agent,valueonly,separator=%x2C)%x1f%(trailers:key=Run,valueonly,separator=%x2C)%x1f%s%x1e"
+
+// ParseLog reads records written with logFormat.
+func ParseLog(out string) []LogEntry {
+	entries := []LogEntry{}
+	for r := range strings.SplitSeq(out, "\x1e") {
+		f := strings.Split(strings.TrimLeft(r, "\n"), "\x1f")
+		if len(f) != 6 {
+			continue
+		}
+		at, err := strconv.ParseInt(f[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, LogEntry{Hash: f[0], At: at, Author: f[2], Agent: strings.TrimSpace(f[3]), Run: strings.TrimSpace(f[4]), Subject: f[5]})
+	}
+	return entries
+}
+
+// Log is the latest n commits touching files under root, newest first; an unborn branch has none.
+func Log(root string, n int) ([]LogEntry, error) {
+	if _, err := run(root, []int{0}, "rev-parse", "-q", "--verify", "HEAD"); err != nil {
+		return nil, nil
+	}
+	out, err := run(root, []int{0}, "log", "-n", strconv.Itoa(n), logFormat, "--", ".")
+	return ParseLog(out), err
+}
+
+// Show is the stat and patch of one commit, limited to files under root.
+func Show(root, hash string) (string, error) {
+	return run(root, []int{0}, "show", "--no-color", "--stat", "--patch", "--format=%H%n%an  %ad%n%n%B", hash, "--", ".")
+}
