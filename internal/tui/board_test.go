@@ -44,7 +44,7 @@ func TestBoardDrawsWeekdayRowsWeekColumnsAndLegend(t *testing.T) {
 	_, m := newApp(t)
 	m.board = board{month: time.Date(2026, 10, 1, 0, 0, 0, 0, time.Local), day: 2, loaded: true, focus: true,
 		created: map[int][]string{2: {"a.md", "b.md"}, 5: {"c.md"}}}
-	lines := strings.Split(ansi.Strip(m.boardView(40, 9)), "\n")
+	lines := strings.Split(ansi.Strip(m.boardView(40)), "\n")
 	require.Len(t, lines, 9)
 	assert.True(t, strings.HasPrefix(lines[0], "Mon "))
 	assert.True(t, strings.HasPrefix(lines[2], "Wed "))
@@ -109,13 +109,11 @@ func TestBoardRecountsOnFileEvents(t *testing.T) {
 	assert.Equal(t, n+1, m.board.total())
 }
 
-func TestBoardTakesHalfTheLeftColumnAndSpacesRows(t *testing.T) {
+func TestBoardIsCompactAtTheBottomOfTheLeftColumn(t *testing.T) {
 	_, m := boardApp(t)
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	lines := strings.Split(screen(m), "\n")
 	top := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "─ "+time.Now().Format("January 2006")) })
-	require.Positive(t, top)
-	assert.InDelta(t, 19, top, 2, "board starts about halfway down the 38-row body")
-	assert.Len(t, strings.Split(ansi.Strip(m.boardView(40, 20)), "\n"), 7+7+2, "one blank line under each weekday when there is room")
-	assert.Len(t, strings.Split(ansi.Strip(m.boardView(40, 9)), "\n"), 9)
+	assert.Equal(t, 40-1-boardHeight, top, "board is the last 12 rows above the help bar, however tall the terminal")
+	assert.Len(t, strings.Split(ansi.Strip(m.boardView(40)), "\n"), 9, "no blank lines between weekdays")
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/osesantos/kb/internal/git"
 )
 
-// boardHeight is the board panel's smallest height: 7 weekday rows, the legend, the day line and the panel frame.
+// boardHeight is the board panel's height: 7 weekday rows, the legend, the day line and the panel frame.
 const boardHeight = 12
 
 // board is the contribution grid under the notes tree: notes created per day of one month.
@@ -149,13 +149,12 @@ func (m *Model) boardTitle() string {
 }
 
 // boardView draws the month as weekday rows × week columns, GitHub style, with a legend and the selected day,
-// spacing the rows out to fill height lines.
-func (m *Model) boardView(width, height int) string {
-	return truncateLines(m.boardLines(height), width)
+// each line cut to width.
+func (m *Model) boardView(width int) string {
+	return truncateLines(m.boardLines(), width)
 }
 
-func (m *Model) boardLines(height int) string {
-	gap := min(max((height-9)/7, 0), 2)
+func (m *Model) boardLines() string {
 	b := &m.board
 	st := m.st.Board
 	nonzero := []int{}
@@ -166,7 +165,7 @@ func (m *Model) boardLines(height int) string {
 	lead := (int(b.month.Weekday()) + 6) % 7
 	weeks := (lead + b.days() + 6) / 7
 	labels := []string{"Mon", "", "Wed", "", "Fri", "", "Sun"}
-	lines := make([]string, 0, 9+7*2)
+	lines := make([]string, 0, 9)
 	for wd := range 7 {
 		var row strings.Builder
 		row.WriteString(st.Label.Render(fmt.Sprintf("%-4s", labels[wd])))
@@ -182,9 +181,6 @@ func (m *Model) boardLines(height int) string {
 			}
 		}
 		lines = append(lines, row.String())
-		for range gap {
-			lines = append(lines, "")
-		}
 	}
 	legend := st.Label.Render("Less ")
 	for _, s := range st.Shades {

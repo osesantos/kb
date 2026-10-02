@@ -523,7 +523,7 @@ func (m *Model) layout() string {
 	listH := bodyH
 	_, notes := m.view.(*notesView)
 	showBoard := notes && boardFits(bodyH)
-	boardH := max(bodyH/2, boardHeight)
+	boardH := boardHeight
 	if showBoard {
 		listH = bodyH - boardH
 	}
@@ -532,8 +532,8 @@ func (m *Model) layout() string {
 	left := components.PanelWithTitle(m.st, m.view.list(m, lw, lh), m.view.listTitle(), listFocus, leftW, listH).Content
 	if showBoard {
 		boardFocus := !m.right && m.board.focus
-		bw, bh := components.TitledPanelInnerSize(m.st, boardFocus, leftW, boardH)
-		left = lipgloss.JoinVertical(lipgloss.Left, left, components.PanelWithTitle(m.st, m.boardView(bw, bh), m.boardTitle(), boardFocus, leftW, boardH).Content)
+		bw, _ := components.TitledPanelInnerSize(m.st, boardFocus, leftW, boardH)
+		left = lipgloss.JoinVertical(lipgloss.Left, left, components.PanelWithTitle(m.st, m.boardView(bw), m.boardTitle(), boardFocus, leftW, boardH).Content)
 	}
 
 	rw, rh := components.TitledPanelInnerSize(m.st, m.right, rightW, bodyH)
