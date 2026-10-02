@@ -10,6 +10,7 @@ import (
 
 	"github.com/osesantos/kb/internal/config"
 	"github.com/osesantos/kb/internal/search"
+	"github.com/osesantos/kb/internal/tui"
 	"github.com/osesantos/kb/internal/vault"
 )
 
@@ -149,6 +150,8 @@ func main() {
 	case len(args) > 0 && args[0] == "read":
 		readCmd(cfg, args[1:])
 	default:
-		die(2, "the TUI is not ported yet")
+		if err := tui.Run(cfg, vault.Load(root(cfg, first(args)))); err != nil {
+			die(1, "%v", err)
+		}
 	}
 }

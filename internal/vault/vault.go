@@ -64,8 +64,8 @@ func Key(target string) string {
 
 var md = goldmark.New(goldmark.WithExtensions(&wikilink.Extender{}, extension.Table, extension.Strikethrough, extension.TaskList))
 
-// stripFrontmatter blanks a leading YAML block so links in metadata are not counted as note links.
-func stripFrontmatter(src string) string {
+// StripFrontmatter drops a leading YAML block, so metadata is neither counted as links nor rendered.
+func StripFrontmatter(src string) string {
 	if !strings.HasPrefix(src, "---\n") {
 		return src
 	}
@@ -79,7 +79,7 @@ func stripFrontmatter(src string) string {
 
 // Wikilinks returns the targets of `[[...]]` links (not `![[...]]` embeds), fragment included.
 func Wikilinks(src string) []string {
-	body := []byte(stripFrontmatter(src))
+	body := []byte(StripFrontmatter(src))
 	links := []string{}
 	_ = ast.Walk(md.Parser().Parse(text.NewReader(body)), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if w, ok := n.(*wikilink.Node); ok && entering && !w.Embed {
@@ -92,6 +92,40 @@ func Wikilinks(src string) []string {
 		return ast.WalkContinue, nil
 	})
 	return links
+}
+
+// RefLinks returns every target a note references, in order and deduplicated: wikilinks, embeds, Markdown links and images.
+func RefLinks(src string) []string {
+	body := []byte(StripFrontmatter(src))
+	seen := map[string]bool{}
+	refs := []string{}
+	add := func(t string) {
+		if t != "" && !seen[t] {
+			seen[t] = true
+			refs = append(refs, t)
+		}
+	}
+	_ = ast.Walk(md.Parser().Parse(text.NewReader(body)), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch n := n.(type) {
+		case *wikilink.Node:
+			t := string(n.Target)
+			if len(n.Fragment) > 0 {
+				t += "#" + string(n.Fragment)
+			}
+			add(t)
+		case *ast.Link:
+			add(string(n.Destination))
+		case *ast.Image:
+			add(string(n.Destination))
+		case *ast.AutoLink:
+			add(string(n.URL(body)))
+		}
+		return ast.WalkContinue, nil
+	})
+	return refs
 }
 
 // pathCmp orders paths component by component, as the Rust version did, so `a/x` sorts before `a b/x`.
