@@ -25,8 +25,8 @@ import (
 const (
 	minWidth, minHeight = 60, 12
 	listPercent         = 35
-	// notesPercent is the narrower left column of the notes view (tree + board), never under notesMinWidth.
-	notesPercent, notesMinWidth = 18, 24
+	// The notes view's left column (tree + board) is notesPercent of the width (at least notesMinWidth) plus notesExtra columns.
+	notesPercent, notesMinWidth, notesExtra = 18, 24, 20
 )
 
 // row is one list line; styled, when set, replaces text on unselected rows.
@@ -516,7 +516,7 @@ func (m *Model) layout() string {
 	bodyH := max(m.h-2, 1)
 	leftW := m.w * listPercent / 100
 	if _, ok := m.view.(*notesView); ok {
-		leftW = max(m.w*notesPercent/100, notesMinWidth)
+		leftW = min(max(m.w*notesPercent/100, notesMinWidth)+notesExtra, m.w-minWidth/2)
 	}
 	rightW := m.w - leftW
 

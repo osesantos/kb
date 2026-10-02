@@ -31,7 +31,7 @@ func newNotes(m *Model) *notesView {
 		case focused:
 			return st.ListRow.Selected.Width(width).Render(truncate(text, width))
 		case it.note < 0:
-			return st.Folder.Render(truncate(text, width))
+			return st.Group.Header.Render(truncate(text, width))
 		}
 		return st.ListRow.Normal.Render(truncate(text, width))
 	})}
