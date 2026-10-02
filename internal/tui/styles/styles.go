@@ -3,8 +3,10 @@
 package styles
 
 import (
-	"charm.land/lipgloss/v2"
 	"image/color"
+
+	"charm.land/lipgloss/v2"
+	"github.com/lucasb-eyer/go-colorful"
 )
 
 // ListIndentUnit is the column count per nesting level in tree views.
@@ -102,7 +104,7 @@ func NewWithTheme(themeName string) *Styles {
 	s.Layout.Box = lipgloss.NewStyle()
 	s.Board.Label = fg(t.Subtext)
 	s.Board.Selected = fg(t.Warning).Bold(true)
-	for i, c := range lipgloss.Blend1D(5, t.SelectionBg, t.Accent) {
+	for i, c := range boardShades(t.HelpBg, t.Accent) {
 		s.Board.Shades[i] = fg(c)
 	}
 	s.Prompt.Label = fg(t.Accent).Bold(true)
@@ -117,4 +119,23 @@ func NewWithTheme(themeName string) *Styles {
 	s.Git.Hunk = fg(t.Primary)
 	s.Git.Meta = fg(t.Muted)
 	return s
+}
+
+// boardShades returns the board's five colours: a neutral grey just off the background for empty days, then four
+// steps of the accent's hue at fixed lightness gaps (0.18 then 0.14), lighter on dark themes and darker on light ones.
+func boardShades(background, accent color.Color) [5]color.Color {
+	bg, _ := colorful.MakeColor(background)
+	a, _ := colorful.MakeColor(accent)
+	h, c, _ := a.Hcl()
+	lbg, _, _ := bg.Lab()
+	dir := 1.0
+	if lbg > 0.5 {
+		dir = -1
+	}
+	l0 := lbg + dir*0.12
+	out := [5]color.Color{colorful.Hcl(0, 0, l0).Clamped()}
+	for i := 1; i < 5; i++ {
+		out[i] = colorful.Hcl(h, c, l0+dir*(0.18+0.14*float64(i-1))).Clamped()
+	}
+	return out
 }
