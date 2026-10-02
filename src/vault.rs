@@ -18,6 +18,7 @@ pub struct Note {
     pub body: String,
     /// Lowercased body, kept so search never re-lowercases the vault per query.
     pub lower: String,
+    pub sections: Vec<crate::search::Section>,
 }
 
 /// A directory of Markdown notes plus the derived link index; rebuilt from disk, never persisted.
@@ -72,7 +73,9 @@ impl Vault {
             .filter_map(|p| {
                 let src = std::fs::read_to_string(&p).ok()?;
                 let path = p.strip_prefix(root).ok()?.to_path_buf();
-                Some(Note { title: path.file_stem()?.to_string_lossy().into_owned(), links: wikilinks(&src), lower: src.to_lowercase(), body: src, path })
+                let lower = src.to_lowercase();
+                let sections = crate::search::sections(&src, &lower);
+                Some(Note { title: path.file_stem()?.to_string_lossy().into_owned(), links: wikilinks(&src), lower, sections, body: src, path })
             })
             .collect();
         notes.sort_by(|a, b| a.path.cmp(&b.path));

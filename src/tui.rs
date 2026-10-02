@@ -787,7 +787,11 @@ impl App {
                     let n = &self.vault.notes[h.note];
                     let (ln, snippet) = h.line.as_ref().map_or((String::new(), ""), |(n, l)| (format!(":{n}"), l.as_str()));
                     ListItem::new(vec![
-                        Line::from(vec![n.title.as_str().bold(), format!("  {}{ln}", n.path.display()).dark_gray()]),
+                        Line::from(vec![
+                            n.title.as_str().bold(),
+                            Some(&n.sections[h.section].heading).filter(|h| !h.is_empty() && **h != n.title).map_or_else(String::new, |h| format!(" › {h}")).into(),
+                            format!("  {}{ln}", n.path.display()).dark_gray(),
+                        ]),
                         Line::from(format!("  {snippet}")),
                     ])
                 });

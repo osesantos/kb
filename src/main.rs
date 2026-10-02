@@ -32,22 +32,23 @@ fn stats(root: PathBuf) {
     println!("unresolved  {unresolved}");
 }
 
-/// `kb search [-C vault] [--json] [-n limit] words...`: grep-like lines by default, JSON for agents.
+/// `kb search [-C vault] [--json] [-n limit] [--budget tokens] words...`: grep-like lines by default, JSON for agents.
 fn search(cfg: &Config, args: &[String]) -> std::io::Result<()> {
-    let (mut vault, mut json, mut limit, mut words) = (None, false, 20, vec![]);
+    let (mut vault, mut json, mut limit, mut budget, mut words) = (None, false, 20, None, vec![]);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
             "-C" | "--vault" => vault = it.next(),
             "-n" => limit = it.next().and_then(|n| n.parse().ok()).unwrap_or(limit),
+            "--budget" => budget = it.next().and_then(|n| n.parse().ok()),
             w => words.push(w),
         }
     }
     let v = Vault::load(&root(cfg, vault));
     let hits = search::lexical(&v, &words.join(" "), limit);
     if json {
-        println!("{}", search::json(&v, &hits));
+        println!("{}", search::json(&v, &hits, budget));
     } else {
         hits.iter().for_each(|h| match &h.line {
             Some((n, l)) => println!("{}:{n}: {l}", v.notes[h.note].path.display()),
@@ -56,6 +57,34 @@ fn search(cfg: &Config, args: &[String]) -> std::io::Result<()> {
     }
     if hits.is_empty() { std::process::exit(1) }
     Ok(())
+}
+
+/// `kb read [-C vault] <note>[#heading]`: prints a note, or only the block under one heading.
+fn read(cfg: &Config, args: &[String]) {
+    let (vault, target) = match args {
+        [flag, v, t] if flag == "-C" || flag == "--vault" => (Some(v), t.as_str()),
+        [t] => (None, t.as_str()),
+        _ => {
+            eprintln!("usage: kb read [-C vault] <note>[#heading]");
+            std::process::exit(2)
+        }
+    };
+    let v = Vault::load(&root(cfg, vault));
+    let Some(i) = v.resolve(target) else {
+        eprintln!("kb: no note {target}");
+        std::process::exit(1)
+    };
+    let body = &v.notes[i].body;
+    match target.split_once('#') {
+        None => print!("{body}"),
+        Some((_, h)) => match search::block(body, h) {
+            Some(b) => print!("{b}"),
+            None => {
+                eprintln!("kb: no heading \"{h}\" in {}", v.notes[i].path.display());
+                std::process::exit(1)
+            }
+        },
+    }
 }
 
 fn main() -> std::io::Result<()> {
@@ -70,6 +99,10 @@ fn main() -> std::io::Result<()> {
             Ok(())
         }
         [cmd, rest @ ..] if cmd == "search" => search(&cfg, rest),
+        [cmd, rest @ ..] if cmd == "read" => {
+            read(&cfg, rest);
+            Ok(())
+        }
         rest => tui::run(Vault::load(&root(&cfg, rest.first())), cfg),
     }
 }
