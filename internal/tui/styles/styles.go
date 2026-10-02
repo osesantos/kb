@@ -44,6 +44,11 @@ type Styles struct {
 	Status struct{ Info, Error lipgloss.Style }
 	Git    struct{ Staged, Unstaged, Added, Removed, Hunk, Meta lipgloss.Style }
 	Form   struct{ Title, Label, LabelFocused, Input, Hint, Error lipgloss.Style }
+	// Board styles the contribution grid: Shades[0] is an empty day, Shades[4] the busiest.
+	Board struct {
+		Label, Selected lipgloss.Style
+		Shades          [5]lipgloss.Style
+	}
 	Glyphs Glyphs
 }
 
@@ -93,6 +98,11 @@ func NewWithTheme(themeName string) *Styles {
 	s.Empty.Hint = fg(t.Subtext)
 	s.TooSmall = fg(t.Warning).Bold(true)
 	s.Layout.Box = lipgloss.NewStyle()
+	s.Board.Label = fg(t.Subtext)
+	s.Board.Selected = fg(t.Warning).Bold(true)
+	for i, c := range lipgloss.Blend1D(5, t.SelectionBg, t.Accent) {
+		s.Board.Shades[i] = fg(c)
+	}
 	s.Prompt.Label = fg(t.Accent).Bold(true)
 	s.Prompt.Text = fg(t.Text)
 	s.Toast.Good = fg(t.Accent).Bold(true)

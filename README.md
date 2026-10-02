@@ -8,13 +8,15 @@ k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, nav
 
 ## TUI
 
-`kb [vault]` opens a list on the left and a preview on the right.
+`kb [vault]` opens a notes tree (folders first, A→Z) with a GitHub-style board of notes created per day this month under it, and a preview on the right. Created dates come from the commit that first added each note; uncommitted new notes count on the day they were saved.
 
 | Key / command | What it does |
 |---|---|
 | `j/k`, `⏎`, `esc` | move, open / focus preview, back |
+| `l` `h` | notes tree: open / close a folder (or jump to its parent) |
+| `tab` | switch between the notes tree and the contribution board (`j/k` day, `h/l` week, `H/L` month, `t` today, `⏎` daily note) |
 | `/` | filter notes by path (list) or find in note (preview, then `n`/`N`) |
-| `tab` | link picker: the note's links, embeds and backlinks |
+| `tab` (in a note) | link picker: the note's links, embeds and backlinks |
 | `[` `]` | history back / forward |
 | `e` | edit in `$VISUAL`/`$EDITOR`; the view reloads on save and on any external change |
 | `s`, `:s words` | BM25 search over sections |

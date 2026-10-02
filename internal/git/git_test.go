@@ -2,8 +2,10 @@ package git
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,5 +88,38 @@ func TestLogReadsTrailersAndScopesToRoot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, all[0].Agent)
 	_, err = Log(t.TempDir(), 10)
+	assert.ErrorContains(t, err, "not a git repository")
+}
+
+func TestCreatedReturnsFirstAddDatesInRange(t *testing.T) {
+	d := t.TempDir()
+	Init(t, d)
+	commitAt := func(when string, files ...string) {
+		t.Helper()
+		for _, f := range files {
+			require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(d, f)), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(d, f), []byte(when), 0o644))
+		}
+		_, err := StageAll(d)
+		require.NoError(t, err)
+		cmd := exec.Command("git", "-C", d, "commit", "-q", "-m", when)
+		cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE="+when, "GIT_AUTHOR_DATE="+when)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	commitAt("2026-09-30T12:00:00Z", "old.md")
+	commitAt("2026-10-02T12:00:00Z", "a b.md", "dir/c.md", "pic.png")
+	commitAt("2026-10-05T12:00:00Z", "old.md", "d.md", "🤩 Feedzai/ção.md")
+
+	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	got, err := Created(d, from, from.AddDate(0, 1, 0))
+	require.NoError(t, err)
+	assert.Len(t, got, 4, "old.md was edited, not added, in October; png is not a note")
+	assert.Equal(t, 2, got["a b.md"].UTC().Day())
+	assert.Equal(t, 2, got["dir/c.md"].UTC().Day())
+	assert.Equal(t, 5, got["d.md"].UTC().Day())
+	assert.Equal(t, 5, got["🤩 Feedzai/ção.md"].UTC().Day(), "non-ASCII paths are not quoted")
+
+	_, err = Created(t.TempDir(), from, from)
 	assert.ErrorContains(t, err, "not a git repository")
 }

@@ -19,6 +19,8 @@ type notesView struct {
 	tree   components.TreeModel[treeItem]
 	// saved is the expansion before a filter auto-expanded the tree; Esc restores it.
 	saved map[string]bool
+	// boardFocus points at the model's board focus so help can tell which left panel is active.
+	boardFocus *bool
 }
 
 func newNotes(m *Model) *notesView {
@@ -33,6 +35,7 @@ func newNotes(m *Model) *notesView {
 		}
 		return st.ListRow.Normal.Render(truncate(text, width))
 	})}
+	n.boardFocus = &m.board.focus
 	n.refilter(m, "")
 	return n
 }
@@ -128,6 +131,9 @@ func (n *notesView) list(_ *Model, w, h int) string {
 }
 
 func (n *notesView) preview(m *Model) (string, string, func(int) string) {
+	if m.board.focus {
+		return m.boardPreview()
+	}
 	if i, ok := n.current(); ok {
 		note := &m.v.Notes[i]
 		return note.Title, note.Path, func(w int) string { return m.renderNote(i, w) }
@@ -195,9 +201,19 @@ func (n *notesView) key(m *Model, k string) tea.Cmd {
 	if m.right {
 		return n.rightKey(m, k, cur, hasCur)
 	}
+	if m.board.focus {
+		if cmd, used := m.boardKey(k); used {
+			m.scroll = 0
+			return cmd
+		}
+	}
 	switch k {
 	case "q":
 		return tea.Quit
+	case "tab":
+		if boardFits(m.h - 2) {
+			m.board.focus, m.scroll = true, 0
+		}
 	case "j", "down":
 		n.tree, _ = n.tree.MoveCursor(1)
 		m.scroll = 0
@@ -292,8 +308,11 @@ func (n *notesView) rightKey(m *Model, k string, cur int, hasCur bool) tea.Cmd {
 }
 
 func (n *notesView) help(right bool) []hint {
+	if !right && n.boardFocus != nil && *n.boardFocus {
+		return []hint{{"j/k", "day"}, {"h/l", "week"}, {"H/L", "month"}, {"t", "today"}, {"⏎", "daily note"}, {"e", "edit/create"}, {"tab", "tree"}}
+	}
 	if right {
 		return []hint{{"j/k", "scroll"}, {"/", "find"}, {"tab", "links"}, {"[ ]", "history"}, {"e", "edit"}, {"esc", "back"}}
 	}
-	return []hint{{"j/k", "move"}, {"l/h", "open/close"}, {"/", "filter"}, {"s", "search"}, {"e", "edit"}, {":", "git cal vaults…"}, {"q", "quit"}}
+	return []hint{{"j/k", "move"}, {"l/h", "open/close"}, {"tab", "board"}, {"/", "filter"}, {"s", "search"}, {"e", "edit"}, {":", "git cal vaults…"}, {"q", "quit"}}
 }

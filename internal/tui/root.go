@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -94,6 +95,7 @@ type Model struct {
 	// returnTo is the view Esc goes back to after opening a hit from it (search results).
 	returnTo view
 	find     find
+	board    board
 	pushing  bool
 	// rw and rh are the preview pane's inner size from the last layout.
 	rw, rh int
@@ -114,7 +116,7 @@ type previewCache struct {
 
 // New builds the root model for a vault; watch may be nil (tests).
 func New(cfg config.Config, v *vault.Vault, watch *vault.Watcher) *Model {
-	m := &Model{st: styles.NewWithTheme(cfg.Theme), cfg: cfg, cfgPath: config.Path(), v: v, watch: watch, pos: -1}
+	m := &Model{st: styles.NewWithTheme(cfg.Theme), cfg: cfg, cfgPath: config.Path(), v: v, watch: watch, pos: -1, board: newBoard(time.Now())}
 	m.view = newNotes(m)
 	if watch != nil && len(watch.Unwatched) > 0 {
 		m.fail("live refresh is off for %d folders (watch limit?)", len(watch.Unwatched))
@@ -143,7 +145,7 @@ type (
 	}
 )
 
-func (m *Model) Init() tea.Cmd { return tea.Batch(m.waitFS(), m.refreshDirty()) }
+func (m *Model) Init() tea.Cmd { return tea.Batch(m.waitFS(), m.refreshDirty(), m.recount()) }
 
 func (m *Model) waitFS() tea.Cmd {
 	if m.watch == nil {
@@ -201,7 +203,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if c, ok := m.view.(commitWatcher); ok && slices.ContainsFunc(msg, vault.InGit) {
 			c.onCommit(m)
 		}
+		if slices.ContainsFunc(msg, vault.InGit) {
+			cmds = append(cmds, m.recount())
+		}
 		return m, tea.Batch(append(cmds, m.refreshDirty())...)
+	case boardMsg:
+		m.applyBoard(msg)
 	case pushedMsg:
 		m.pushing = false
 		if msg.err != nil {
@@ -219,16 +226,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.watch.Close() // the old watcher is discarded either way
 		}
 		m.v, m.watch, m.hist, m.pos, m.gen = msg.v, msg.w, nil, -1, m.gen+1
-		m.picker, m.prompt, m.form = nil, nil, nil
+		m.picker, m.prompt, m.form, m.board = nil, nil, nil, newBoard(time.Now())
 		m.goTo(newNotes(m))
 		m.info("switched to %s", msg.name)
 		if n := len(msg.w.Unwatched); n > 0 {
 			m.fail("switched to %s; live refresh is off for %d folders", msg.name, n)
 		}
-		return m, tea.Batch(m.waitFS(), m.refreshDirty())
+		return m, tea.Batch(m.waitFS(), m.refreshDirty(), m.recount())
 	case reloadedMsg:
 		if msg.v.Root == m.v.Root {
 			m.applyReload(msg.v)
+			return m, m.recount()
 		}
 	case editedMsg:
 		if msg.err != nil {
@@ -507,8 +515,19 @@ func (m *Model) layout() string {
 	leftW := m.w * listPercent / 100
 	rightW := m.w - leftW
 
-	lw, lh := components.TitledPanelInnerSize(m.st, !m.right, leftW, bodyH)
-	left := components.PanelWithTitle(m.st, m.view.list(m, lw, lh), m.view.listTitle(), !m.right, leftW, bodyH).Content
+	listH := bodyH
+	_, notes := m.view.(*notesView)
+	showBoard := notes && boardFits(bodyH)
+	if showBoard {
+		listH = bodyH - boardHeight
+	}
+	listFocus := !m.right && !(showBoard && m.board.focus)
+	lw, lh := components.TitledPanelInnerSize(m.st, listFocus, leftW, listH)
+	left := components.PanelWithTitle(m.st, m.view.list(m, lw, lh), m.view.listTitle(), listFocus, leftW, listH).Content
+	if showBoard {
+		boardFocus := !m.right && m.board.focus
+		left = lipgloss.JoinVertical(lipgloss.Left, left, components.PanelWithTitle(m.st, m.boardView(), m.boardTitle(), boardFocus, leftW, boardHeight).Content)
+	}
 
 	rw, rh := components.TitledPanelInnerSize(m.st, m.right, rightW, bodyH)
 	m.rw, m.rh = rw, rh

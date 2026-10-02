@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Entry is one `git status` line: index (X) and worktree (Y) state of a path.
@@ -158,6 +159,40 @@ func Log(root string, n int) ([]LogEntry, error) {
 	}
 	out, err := run(root, []int{0}, "log", "-n", strconv.Itoa(n), logFormat, "--", ".")
 	return ParseLog(out), err
+}
+
+// Created maps each Markdown file under root first added between from and to (paths relative to root) to that commit's time.
+// Renames count as additions, so a renamed note dates from its rename.
+func Created(root string, from, to time.Time) (map[string]time.Time, error) {
+	if _, ok := Toplevel(root); !ok {
+		return nil, errors.New("not a git repository")
+	}
+	if _, err := run(root, []int{0}, "rev-parse", "-q", "--verify", "HEAD"); err != nil {
+		return map[string]time.Time{}, nil
+	}
+	out, err := run(root, []int{0}, "-c", "core.quotePath=false", "log", "--no-renames", "--diff-filter=A", "--relative",
+		"--since="+from.Format(time.RFC3339), "--until="+to.Format(time.RFC3339),
+		"--format=%x1e%at", "--name-only", "--", "*.md")
+	if err != nil {
+		return nil, err
+	}
+	created := map[string]time.Time{}
+	for rec := range strings.SplitSeq(out, "\x1e") {
+		lines := slices.DeleteFunc(strings.Split(rec, "\n"), func(l string) bool { return l == "" })
+		if len(lines) < 2 {
+			continue
+		}
+		at, err := strconv.ParseInt(lines[0], 10, 64)
+		if err != nil {
+			continue
+		}
+		for _, p := range lines[1:] {
+			if t, seen := created[p]; !seen || time.Unix(at, 0).Before(t) {
+				created[p] = time.Unix(at, 0)
+			}
+		}
+	}
+	return created, nil
 }
 
 // Show is the stat and patch of one commit, limited to files under root.
