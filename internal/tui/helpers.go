@@ -5,7 +5,6 @@ import (
 
 	"github.com/osesantos/kb/internal/tui/styles"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -94,15 +93,6 @@ func (m *Model) jumpFind() {
 	if m.find.cur < len(m.find.hits) {
 		m.scroll = max(m.find.hits[m.find.cur]-m.rh/3, 0)
 	}
-}
-
-func searchPrompt() *prompt {
-	return &prompt{label: "search: ", done: func(m *Model, q string) tea.Cmd {
-		if q != "" {
-			m.search(q)
-		}
-		return nil
-	}}
 }
 
 // diffText colours a unified diff with the theme's git styles.

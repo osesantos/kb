@@ -16,9 +16,8 @@ import (
 
 func TestReloadRemapsSearchResultsWaitingBehindAnOpenHit(t *testing.T) {
 	d, m := newApp(t)
-	press(m, "s")
-	typeStr(m, "nowhere")
-	press(m, "enter", "enter")
+	command(m, "s nowhere")
+	press(m, "enter")
 	write(t, d, "0 first.md", "sorts before A and B")
 	m.applyReload(vault.Load(d))
 	assert.NotPanics(t, func() { press(m, "esc", "esc") })

@@ -19,7 +19,8 @@ k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, nav
 | `tab` (in a note) | link picker: the note's links, embeds and backlinks |
 | `[` `]` | history back / forward |
 | `e` | edit in `$VISUAL`/`$EDITOR`; the view reloads on save and on any external change |
-| `s`, `:s words` | BM25 search over sections |
+| `s` | search popup: results update as you type, preview on the right; `↑↓`/`ctrl+n/p` move, `⏎` opens the note at the match, `tab` shows all results |
+| `:s words` | full BM25 results view over sections |
 | `:git` | status, diff, `space` stage, `a` all, `c` commit, `p` push, `A` auto-commit (stage all, commit "auto-commit: <date time>", push) |
 | `:activity` | commits touching the vault, attributed by `Agent:` / `Run:` trailers |
 | `:cal` | daily notes for the month (`H/L` month, `t` today, `e` creates) |

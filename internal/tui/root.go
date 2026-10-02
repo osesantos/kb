@@ -84,6 +84,7 @@ type Model struct {
 	prompt    *prompt
 	picker    *picker
 	form      *form
+	finder    *finder
 	cfgPath   string
 	status    string
 	statusErr bool
@@ -228,7 +229,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.watch.Close() // the old watcher is discarded either way
 		}
 		m.v, m.watch, m.hist, m.pos, m.gen = msg.v, msg.w, nil, -1, m.gen+1
-		m.picker, m.prompt, m.form, m.board = nil, nil, nil, newBoard(time.Now())
+		m.picker, m.prompt, m.form, m.finder, m.board = nil, nil, nil, nil, newBoard(time.Now())
 		m.goTo(newNotes(m))
 		m.info("switched to %s", msg.name)
 		if n := len(msg.w.Unwatched); n > 0 {
@@ -247,6 +248,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.reload(), m.refreshDirty())
 	case tea.PasteMsg:
 		switch {
+		case m.finder != nil:
+			m.finderPaste(msg.Content)
 		case m.form != nil:
 			m.formPaste(msg.Content)
 		case m.prompt != nil:
@@ -263,6 +266,8 @@ func (m *Model) keyPress(k string) tea.Cmd {
 	switch {
 	case k == "ctrl+c":
 		return tea.Quit
+	case m.finder != nil:
+		return m.finderKey(k)
 	case m.form != nil:
 		return m.formKey(k)
 	case m.prompt != nil:
@@ -312,7 +317,7 @@ func runCommand(m *Model, c string) tea.Cmd {
 		m.goTo(newNotes(m))
 	case "search", "s":
 		if arg == "" {
-			m.prompt = searchPrompt()
+			m.openFinder()
 		} else {
 			m.search(strings.TrimSpace(arg))
 		}
@@ -339,7 +344,7 @@ func (m *Model) goTo(v view) {
 }
 
 // applyReload swaps in a freshly loaded vault and remaps every note index the UI holds: the current view,
-// the view Esc returns to, the open link picker and the history.
+// the view Esc returns to, the open link picker, the search popup and the history.
 func (m *Model) applyReload(nv *vault.Vault) {
 	restores := []func(*Model){}
 	for _, v := range []view{m.view, m.returnTo} {
@@ -355,6 +360,11 @@ func (m *Model) applyReload(nv *vault.Vault) {
 	m.gen++
 	for _, restore := range restores {
 		restore(m)
+	}
+	if f := m.finder; f != nil {
+		sel := f.sel
+		f.rerun(m)
+		f.sel = min(sel, max(len(f.hits)-1, 0))
 	}
 	m.picker = nil
 	if n, ok := m.view.(*notesView); ok && pickSel >= 0 {
@@ -444,6 +454,8 @@ func (m *Model) View() tea.View {
 	case m.w < minWidth || m.h < minHeight:
 		msg := m.st.TooSmall.Render(fmt.Sprintf("Terminal too small. Minimum size: %dx%d.", minWidth, minHeight))
 		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, msg)
+	case m.finder != nil:
+		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, m.finderView())
 	case m.form != nil:
 		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, m.formView())
 	case m.picker != nil:

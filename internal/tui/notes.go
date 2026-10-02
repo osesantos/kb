@@ -225,7 +225,7 @@ func (n *notesView) key(m *Model, k string) tea.Cmd {
 	case "G":
 		n.tree, m.scroll = n.tree.SelectIndex(n.tree.RowCount()-1), 0
 	case "s":
-		m.prompt = searchPrompt()
+		m.openFinder()
 	case "/":
 		m.prompt = &prompt{
 			label: "/", text: n.filter,

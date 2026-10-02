@@ -34,21 +34,51 @@ func command(m *Model, c string) {
 	press(m, "enter")
 }
 
-func TestSearchOpensNoteAtFirstMatchAndBackReturnsToResults(t *testing.T) {
+func TestSearchPopupShowsResultsAsYouTypeAndOpensTheMatch(t *testing.T) {
 	_, m := newApp(t)
 	press(m, "s")
-	typeStr(m, "nowhere")
-	press(m, "enter")
+	require.NotNil(t, m.finder)
+	assert.Contains(t, screen(m), "type to search")
+	typeStr(m, "nowh")
 	s := screen(m)
-	assert.Contains(t, s, `search "nowhere" (1)`)
-	assert.Contains(t, s, "B.md:3")
-	press(m, "enter")
-	s = screen(m)
-	assert.Contains(t, s, "match 1/1")
-	press(m, "esc", "esc")
-	assert.Contains(t, screen(m), `search "nowhere"`)
-	command(m, "s zzz")
+	assert.Contains(t, s, "› nowh█")
+	assert.Contains(t, s, "B.md")
+	assert.Contains(t, s, "Missing Nowhere", "preview shows the selected section")
+	typeStr(m, "erez")
 	assert.Contains(t, screen(m), "no matches")
+	press(m, "backspace", "backspace", "enter")
+	assert.Nil(t, m.finder)
+	s = screen(m)
+	assert.Contains(t, s, "› B.md")
+	assert.Contains(t, s, "match 1/1")
+}
+
+func TestSearchPopupMovesTabsToFullResultsAndCloses(t *testing.T) {
+	_, m := newApp(t)
+	press(m, "s")
+	typeStr(m, "b")
+	require.Len(t, m.finder.hits, 2)
+	press(m, "down")
+	assert.Equal(t, 1, m.finder.sel)
+	press(m, "up", "up")
+	assert.Equal(t, 0, m.finder.sel)
+	press(m, "tab")
+	assert.Nil(t, m.finder)
+	assert.Contains(t, screen(m), `search "b" (2)`)
+	press(m, "s", "esc")
+	assert.Nil(t, m.finder)
+	command(m, "s nowhere")
+	assert.Contains(t, screen(m), `search "nowhere" (1)`, ":s words still opens the full results view")
+}
+
+func TestSearchPopupSurvivesAReload(t *testing.T) {
+	d, m := newApp(t)
+	press(m, "s")
+	typeStr(m, "nowhere")
+	write(t, d, "0 first.md", "sorts before everything")
+	m.applyReload(vault.Load(d))
+	press(m, "enter")
+	assert.Contains(t, screen(m), "› B.md")
 }
 
 func TestFindInNoteCyclesMatches(t *testing.T) {

@@ -91,7 +91,7 @@ func (s *searchView) key(m *Model, k string) tea.Cmd {
 	case "esc", "q":
 		m.backToNotes()
 	case "s":
-		m.prompt = searchPrompt()
+		m.openFinder()
 	case "l", "right":
 		m.right = true
 	case "enter":
