@@ -41,6 +41,7 @@ type Styles struct {
 	// Status styles the one-line message shown in the help bar's place.
 	Status struct{ Info, Error lipgloss.Style }
 	Git    struct{ Staged, Unstaged, Untracked, Added, Removed, Hunk, Meta lipgloss.Style }
+	Form   struct{ Title, Label, LabelFocused, Input, Hint, Error lipgloss.Style }
 	Glyphs Glyphs
 }
 
@@ -69,6 +70,13 @@ func NewWithTheme(themeName string, disableEmoji bool) *Styles {
 	s.ListRow.Aux = fg(t.Muted)
 	s.ListRow.AuxSelected = fg(t.Subtext).Background(t.SelectionBg)
 	s.Group.Header = fg(t.Accent).Bold(true)
+	onModal := func(c color.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c).Background(t.ModalBg) }
+	s.Form.Title = onModal(t.Primary).Bold(true)
+	s.Form.Label = onModal(t.Subtext)
+	s.Form.LabelFocused = onModal(t.Accent).Bold(true)
+	s.Form.Input = onModal(t.Text)
+	s.Form.Hint = onModal(t.Muted)
+	s.Form.Error = onModal(t.Warning)
 	s.Danger = fg(t.Danger).Bold(true)
 	s.Modal.Box = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(t.BorderFocus).Background(t.ModalBg).Foreground(t.Text).Padding(1, 3)
 	s.Modal.Overlay = t.OverlayBg

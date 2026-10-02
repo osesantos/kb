@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -97,4 +98,31 @@ func (c Config) Daily(root string) DailyCfg {
 		}
 	}
 	return DailyCfg{}
+}
+
+// AddVault appends a `[[vault]]` table to the config file, creating it if needed.
+// Text is appended rather than the file rewritten, so comments and ordering survive;
+// path is stored as given (keep `~`) so the file stays valid across machines.
+func AddVault(file, name, path string) error {
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		return err
+	}
+	existing, _ := os.ReadFile(file)
+	sep := ""
+	switch {
+	case len(existing) == 0:
+	case !strings.HasSuffix(string(existing), "\n"):
+		sep = "\n\n"
+	default:
+		sep = "\n"
+	}
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, werr := fmt.Fprintf(f, "%s[[vault]]\nname = %s\npath = %s\n", sep, strconv.Quote(name), strconv.Quote(path))
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	return werr
 }

@@ -75,6 +75,8 @@ type Model struct {
 
 	prompt    *prompt
 	picker    *picker
+	form      *form
+	cfgPath   string
 	status    string
 	statusErr bool
 	dirty     int
@@ -107,7 +109,7 @@ type previewCache struct {
 
 // New builds the root model for a vault; watch may be nil (tests).
 func New(cfg config.Config, v *vault.Vault, watch *vault.Watcher) *Model {
-	m := &Model{st: styles.NewWithTheme(cfg.Theme, true), cfg: cfg, v: v, watch: watch, pos: -1}
+	m := &Model{st: styles.NewWithTheme(cfg.Theme, true), cfg: cfg, cfgPath: config.Path(), v: v, watch: watch, pos: -1}
 	m.view = newNotes(m)
 	return m
 }
@@ -213,6 +215,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fail("editor: %v", msg.err)
 		}
 		return m, tea.Batch(m.reload(), m.refreshDirty())
+	case tea.PasteMsg:
+		switch {
+		case m.form != nil:
+			m.formPaste(msg.Content)
+		case m.prompt != nil:
+			m.prompt.text += strings.NewReplacer("\r", "", "\n", " ").Replace(msg.Content)
+		}
 	case tea.KeyPressMsg:
 		return m, m.keyPress(msg.String())
 	}
@@ -224,6 +233,8 @@ func (m *Model) keyPress(k string) tea.Cmd {
 	switch {
 	case k == "ctrl+c":
 		return tea.Quit
+	case m.form != nil:
+		return m.formKey(k)
 	case m.prompt != nil:
 		return m.promptKey(k)
 	case m.picker != nil:
@@ -386,6 +397,8 @@ func (m *Model) View() tea.View {
 	case m.w < minWidth || m.h < minHeight:
 		msg := m.st.TooSmall.Render(fmt.Sprintf("Terminal too small. Minimum size: %dx%d.", minWidth, minHeight))
 		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, msg)
+	case m.form != nil:
+		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, m.formView())
 	case m.picker != nil:
 		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, m.pickerView())
 	default:

@@ -34,3 +34,20 @@ func TestResolvesNamesPathsDailyOverridesAndTheme(t *testing.T) {
 	assert.Equal(t, DailyCfg{Format: "YYYY-MM-DD"}, c.Daily(root))
 	assert.Equal(t, DailyCfg{}, c.Daily("/elsewhere"))
 }
+
+func TestAddVaultAppendsAndKeepsComments(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "sub", "config.toml")
+	require.NoError(t, AddVault(file, "main", "~/git/vault"))
+	b, _ := os.ReadFile(file)
+	assert.Equal(t, "[[vault]]\nname = \"main\"\npath = \"~/git/vault\"\n", string(b))
+
+	require.NoError(t, os.WriteFile(file, []byte("# my config\ntheme = \"nord\"\n[[vault]]\nname = \"a\"\npath = \"/tmp\""), 0o644))
+	require.NoError(t, AddVault(file, "b \"q\"", "/x"))
+	c, err := Load(file)
+	require.NoError(t, err)
+	require.Len(t, c.Vaults, 2)
+	assert.Equal(t, "b \"q\"", c.Vaults[1].Name)
+	assert.Equal(t, "nord", c.Theme)
+	b, _ = os.ReadFile(file)
+	assert.Contains(t, string(b), "# my config")
+}

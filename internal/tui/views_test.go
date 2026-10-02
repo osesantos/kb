@@ -160,3 +160,57 @@ func TestVaultsListsConfigAndSwitches(t *testing.T) {
 	assert.Equal(t, other, m.v.Root)
 	assert.Contains(t, s, "Z")
 }
+
+func vaultsApp(t *testing.T) (string, string, *Model) {
+	t.Helper()
+	d, m := newApp(t)
+	m.cfgPath = filepath.Join(t.TempDir(), "kb", "config.toml")
+	other, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	command(m, "vaults")
+	return d, other, m
+}
+
+func TestNewVaultFormAddsToConfigAndList(t *testing.T) {
+	_, other, m := vaultsApp(t)
+	assert.Contains(t, screen(m), "press n to add one")
+	press(m, "n")
+	assert.Contains(t, screen(m), "New Vault")
+	typeStr(m, "work")
+	press(m, "tab", "ctrl+u")
+	typeStr(m, other)
+	press(m, "enter")
+	s := screen(m)
+	assert.Contains(t, s, "added vault work")
+	assert.Contains(t, s, "vaults (1)")
+	assert.Nil(t, m.form)
+	b, err := os.ReadFile(m.cfgPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `name = "work"`)
+	assert.Contains(t, string(b), other)
+	c, err := config.Load(m.cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, other, c.Vaults[0].Path)
+}
+
+func TestNewVaultFormValidatesAndCancels(t *testing.T) {
+	_, other, m := vaultsApp(t)
+	press(m, "n", "tab", "ctrl+u")
+	typeStr(m, "/definitely/not/here")
+	press(m, "enter")
+	assert.Contains(t, screen(m), "not a directory")
+	assert.NotNil(t, m.form)
+	press(m, "ctrl+u")
+	typeStr(m, other)
+	press(m, "enter")
+	assert.Nil(t, m.form)
+	assert.Equal(t, filepath.Base(other), m.cfg.Vaults[0].Name, "empty name falls back to the folder name")
+
+	press(m, "n", "tab", "ctrl+u")
+	typeStr(m, other)
+	press(m, "enter")
+	assert.Contains(t, screen(m), "already")
+	press(m, "esc")
+	assert.Nil(t, m.form)
+	assert.Len(t, m.cfg.Vaults, 1)
+}

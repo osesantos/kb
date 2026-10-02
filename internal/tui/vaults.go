@@ -53,7 +53,7 @@ func (v *vaultsView) preview(m *Model) (string, string, func(int) string) {
 	c, ok := v.cfg(m)
 	if !ok {
 		return "Vault", "none", func(int) string {
-			return m.st.Empty.Hint.Render("no [[vault]] entries in " + config.Path())
+			return m.st.Empty.Hint.Render("no vaults yet — press n to add one")
 		}
 	}
 	return c.Name, c.Path, func(int) string {
@@ -83,6 +83,8 @@ func (v *vaultsView) key(m *Model, k string) tea.Cmd {
 	switch k {
 	case "esc", "q":
 		m.backToNotes()
+	case "n":
+		m.form = newVaultForm(m)
 	case "enter":
 		if c, ok := v.cfg(m); ok {
 			return switchVault(c)
@@ -101,5 +103,5 @@ func switchVault(c config.VaultCfg) tea.Cmd {
 }
 
 func (v *vaultsView) help(bool) []hint {
-	return []hint{{"j/k", "move"}, {"⏎", "switch"}, {"esc", "notes"}}
+	return []hint{{"j/k", "move"}, {"⏎", "switch"}, {"n", "new vault"}, {"esc", "notes"}}
 }
