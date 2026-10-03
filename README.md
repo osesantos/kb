@@ -21,7 +21,10 @@ k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, nav
 | `e` | edit in `$VISUAL`/`$EDITOR`; the view reloads on save and on any external change |
 | `s` | search popup: results update as you type, preview on the right; `↑↓`/`ctrl+n/p` move, `⏎` opens the note at the match, `tab` shows all results |
 | `:s words` | full BM25 results view over sections |
-| `:git` | status, diff, `space` stage, `a` all, `c` commit, `p` push, `A` auto-commit (stage all, commit "auto-commit: <date time>", push) |
+| `:git` | status, diff, `space` stage, `a` all, `c` commit, `p` push, `P` pull, `A` auto-commit (stage all, commit "auto-commit: <date time>", push) |
+| `:pull` | pull (merge); on conflict opens the conflicts popup. kb also pulls on start and on vault switch when the branch has an upstream |
+| `:conflicts` | during a merge: popup of unmerged files, ✗ while `<<<<<<<` markers remain, `⏎` edit, `C` continue once all ✓ |
+| `:continue` | during a merge: stage the resolved files, commit the merge, push |
 | `:activity` | commits touching the vault, attributed by `Agent:` / `Run:` trailers |
 | `:cal` | daily notes for the month (`H/L` month, `t` today, `e` creates) |
 | `:vaults` | switch between configured vaults |

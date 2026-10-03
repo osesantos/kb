@@ -123,3 +123,44 @@ func TestCreatedReturnsFirstAddDatesInRange(t *testing.T) {
 	_, err = Created(t.TempDir(), from, from)
 	assert.ErrorContains(t, err, "not a git repository")
 }
+
+func TestPullConflictThenFinishMerge(t *testing.T) {
+	remote, a, b := t.TempDir(), t.TempDir(), t.TempDir()
+	_, err := run(remote, []int{0}, "init", "-q", "--bare", "-b", "main")
+	require.NoError(t, err)
+	commit := func(dir, text string) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "n.md"), []byte(text), 0o644))
+		_, err := StageAll(dir)
+		require.NoError(t, err)
+		_, err = Commit(dir, text)
+		require.NoError(t, err)
+	}
+	Init(t, a)
+	assert.False(t, HasUpstream(a))
+	_, err = run(a, []int{0}, "checkout", "-q", "-b", "main")
+	require.NoError(t, err)
+	commit(a, "base\n")
+	_, err = run(a, []int{0}, "push", "-q", "-u", remote, "main")
+	require.NoError(t, err)
+	require.NoError(t, exec.Command("git", "clone", "-q", remote, b).Run())
+	Init(t, b)
+	commit(a, "from a\n")
+	_, err = run(a, []int{0}, "push", "-q", remote, "main")
+	require.NoError(t, err)
+	commit(b, "from b\n")
+	assert.True(t, HasUpstream(b))
+
+	_, err = Pull(b)
+	require.NoError(t, err)
+	assert.True(t, Merging(b))
+	c, err := Conflicts(b)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"n.md"}, c)
+	text, _ := os.ReadFile(filepath.Join(b, "n.md"))
+	assert.True(t, HasMarkers(string(text)))
+
+	require.NoError(t, os.WriteFile(filepath.Join(b, "n.md"), []byte("both\n"), 0o644))
+	_, err = FinishMerge(b, c)
+	require.NoError(t, err)
+	assert.False(t, Merging(b))
+}

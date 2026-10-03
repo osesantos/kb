@@ -124,6 +124,53 @@ func Commit(root, msg string) (string, error) {
 // Push pushes the current branch; it never prompts, so a missing credential fails fast.
 func Push(root string) (string, error) { return run(root, []int{0}, "push", "-q") }
 
+// Pull merges the upstream branch; a conflict is not an error, it leaves the repository Merging.
+func Pull(root string) (string, error) {
+	out, err := run(root, []int{0}, "pull", "--no-rebase", "--no-edit", "-q")
+	if err != nil && Merging(root) {
+		return out, nil
+	}
+	return out, err
+}
+
+// HasUpstream reports a repository whose current branch tracks a remote branch.
+func HasUpstream(root string) bool {
+	_, err := run(root, []int{0}, "rev-parse", "-q", "--verify", "@{upstream}")
+	return err == nil
+}
+
+// Merging reports an unfinished merge (MERGE_HEAD exists).
+func Merging(root string) bool {
+	_, err := run(root, []int{0}, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+	return err == nil
+}
+
+// Conflicts lists unmerged paths, relative to the repository top level.
+func Conflicts(root string) ([]string, error) {
+	out, err := run(root, []int{0}, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=U", "-z")
+	return slices.DeleteFunc(strings.Split(out, "\x00"), func(p string) bool { return p == "" }), err
+}
+
+// HasMarkers reports whether text still holds a conflict marker at the start of a line.
+func HasMarkers(text string) bool {
+	return slices.ContainsFunc(strings.Split(text, "\n"), func(l string) bool {
+		return strings.HasPrefix(l, "<<<<<<< ") || strings.HasPrefix(l, ">>>>>>> ") || l == "======="
+	})
+}
+
+// FinishMerge stages the resolved paths and commits the merge with git's prepared message.
+func FinishMerge(root string, paths []string) (string, error) {
+	for _, p := range paths {
+		if _, err := Stage(root, p); err != nil {
+			return "", err
+		}
+	}
+	if _, err := run(root, []int{0}, "commit", "-q", "--no-edit"); err != nil {
+		return "", err
+	}
+	return run(root, []int{0}, "log", "-1", "--format=%h %s")
+}
+
 // LogEntry is a commit touching the vault, with its `Agent:` / `Run:` trailers when the writer set them.
 type LogEntry struct {
 	Hash, Author, Agent, Run, Subject string

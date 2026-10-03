@@ -85,6 +85,7 @@ type Model struct {
 	picker    *picker
 	form      *form
 	finder    *finder
+	conflicts *conflicts
 	cfgPath   string
 	status    string
 	statusErr bool
@@ -148,7 +149,9 @@ type (
 	}
 )
 
-func (m *Model) Init() tea.Cmd { return tea.Batch(m.waitFS(), m.refreshDirty(), m.recount()) }
+func (m *Model) Init() tea.Cmd {
+	return tea.Batch(m.waitFS(), m.refreshDirty(), m.recount(), m.autoPull())
+}
 
 func (m *Model) waitFS() tea.Cmd {
 	if m.watch == nil {
@@ -220,6 +223,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.info("pushed %s", strings.TrimSpace(msg.out))
 		}
 		return m, m.refreshDirty()
+	case pulledMsg:
+		return m, m.pulled(msg)
 	case switchedMsg:
 		if msg.err != nil {
 			m.fail("switch failed: %v", msg.err)
@@ -229,13 +234,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.watch.Close() // the old watcher is discarded either way
 		}
 		m.v, m.watch, m.hist, m.pos, m.gen = msg.v, msg.w, nil, -1, m.gen+1
-		m.picker, m.prompt, m.form, m.finder, m.board = nil, nil, nil, nil, newBoard(time.Now())
+		m.picker, m.prompt, m.form, m.finder, m.conflicts, m.board = nil, nil, nil, nil, nil, newBoard(time.Now())
 		m.goTo(newNotes(m))
 		m.info("switched to %s", msg.name)
 		if n := len(msg.w.Unwatched); n > 0 {
 			m.fail("switched to %s; live refresh is off for %d folders", msg.name, n)
 		}
-		return m, tea.Batch(m.waitFS(), m.refreshDirty(), m.recount())
+		return m, tea.Batch(m.waitFS(), m.refreshDirty(), m.recount(), m.autoPull())
 	case reloadedMsg:
 		if msg.v.Root == m.v.Root {
 			m.applyReload(msg.v)
@@ -244,6 +249,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editedMsg:
 		if msg.err != nil {
 			m.fail("editor: %v", msg.err)
+		}
+		if m.conflicts != nil {
+			m.conflicts.refresh(m)
 		}
 		return m, tea.Batch(m.reload(), m.refreshDirty())
 	case tea.PasteMsg:
@@ -266,6 +274,8 @@ func (m *Model) keyPress(k string) tea.Cmd {
 	switch {
 	case k == "ctrl+c":
 		return tea.Quit
+	case m.conflicts != nil:
+		return m.conflictsKey(k)
 	case m.finder != nil:
 		return m.finderKey(k)
 	case m.form != nil:
@@ -323,6 +333,12 @@ func runCommand(m *Model, c string) tea.Cmd {
 		}
 	case "git", "g":
 		m.openGit()
+	case "pull":
+		return m.pull()
+	case "conflicts":
+		m.openConflicts()
+	case "continue":
+		return m.mergeContinue()
 	case "activity", "a":
 		m.openActivity()
 	case "cal", "c":
@@ -333,7 +349,11 @@ func runCommand(m *Model, c string) tea.Cmd {
 		return tea.Quit
 	case "":
 	default:
-		m.fail("unknown command: %s  (notes, search, git, activity, cal, vaults, quit)", name)
+		cmds := "notes, search, git, pull, activity, cal, vaults, quit"
+		if git.Merging(m.v.Root) {
+			cmds = "conflicts, continue, " + cmds
+		}
+		m.fail("unknown command: %s  (%s)", name, cmds)
 	}
 	return nil
 }
@@ -454,6 +474,8 @@ func (m *Model) View() tea.View {
 	case m.w < minWidth || m.h < minHeight:
 		msg := m.st.TooSmall.Render(fmt.Sprintf("Terminal too small. Minimum size: %dx%d.", minWidth, minHeight))
 		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, msg)
+	case m.conflicts != nil:
+		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, m.conflictsView())
 	case m.finder != nil:
 		out = lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, m.finderView())
 	case m.form != nil:

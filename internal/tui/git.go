@@ -16,6 +16,7 @@ type gitView struct {
 	top     string
 	entries []git.Entry
 	selIdx  int
+	merging bool
 }
 
 func (m *Model) openGit() {
@@ -41,6 +42,7 @@ func (g *gitView) refresh(m *Model) {
 		keep = e.Path
 	}
 	g.entries = st
+	g.merging = git.Merging(m.v.Root)
 	g.selIdx = max(slices.IndexFunc(st, func(e git.Entry) bool { return e.Path == keep }), 0)
 	m.gen++
 }
@@ -134,6 +136,12 @@ func (g *gitView) key(m *Model, k string) tea.Cmd {
 		}}
 	case "p":
 		return m.push(root)
+	case "P":
+		return m.pull()
+	case "M":
+		if g.merging {
+			m.openConflicts()
+		}
 	case "A":
 		return g.autoCommit(m, root)
 	case "e":
@@ -178,5 +186,8 @@ func (g *gitView) help(right bool) []hint {
 	if right {
 		return []hint{{"j/k", "scroll"}, {"esc", "back"}}
 	}
-	return []hint{{"j/k", "move"}, {"⏎", "diff"}, {"space", "stage/unstage"}, {"a", "stage all"}, {"c", "commit"}, {"p", "push"}, {"A", "auto-commit+push"}, {"e", "edit"}, {"esc", "notes"}}
+	if g.merging {
+		return []hint{{"j/k", "move"}, {"M", "merge conflicts"}, {"⏎", "diff"}, {"e", "edit"}, {"esc", "notes"}}
+	}
+	return []hint{{"j/k", "move"}, {"⏎", "diff"}, {"space", "stage/unstage"}, {"a", "stage all"}, {"c", "commit"}, {"p", "push"}, {"P", "pull"}, {"A", "auto-commit+push"}, {"e", "edit"}, {"esc", "notes"}}
 }
