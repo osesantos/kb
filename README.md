@@ -1,12 +1,20 @@
-# kb
+<p align="center">
+  <img src="assets/kb.png" alt="kb icon" width="128">
+</p>
 
-k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, navigate, search and git-operate Markdown vaults shared by humans and AI agents. Go + Bubble Tea, styled like [Overseer](https://github.com/dnlopes/overseer).
+<h1 align="center">kb</h1>
 
-## Install
+<p align="center">
+  🧠 <b>k9s for your knowledge base</b> · ⌨️ keyboard-driven · 🔎 BM25 search · 🌿 git built in · 🎨 Omarchy-themed
+</p>
+
+📚 k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, navigate, search and git-operate Markdown vaults shared by humans and AI agents. Go + Bubble Tea, styled like [Overseer](https://github.com/dnlopes/overseer).
+
+## 📦 Install
 
 `make install` builds `kb` into `~/.local/bin` (set `BIN=` to change it). Needs Go 1.25+ (`GOTOOLCHAIN=auto` fetches it).
 
-## TUI
+## 🖥️ TUI
 
 `kb [vault]` opens a notes tree (folders first, A→Z) with a GitHub-style board of notes created per day this month under it, and a preview on the right. Created dates come from the commit that first added each note; uncommitted new notes count on the day they were saved.
 
@@ -30,17 +38,15 @@ k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, nav
 | `:vaults` | switch between configured vaults |
 | `:notes`, `:q` | back to notes, quit |
 
-## CLI
+## 🛠️ CLI
 
 - `kb search [-C vault] [--json] [-n N] [--budget TOKENS] words` — BM25-ranked `##`/`###` sections with line ranges. `--budget` inlines section text until the token budget is spent. Exit 1 on no hits.
 - `kb read [-C vault] 'note#heading'` — prints one section.
 - `kb stats [vault]` — load time and link stats.
 
-## Config
+## ⚙️ Config
 
 `~/.config/kb/config.toml`:
-
-On [Omarchy](https://omarchy.org), an empty `theme` or `"omarchy"` follows the active Omarchy theme and repaints live on `omarchy theme set`. Off Omarchy it falls back to `dark`. A named theme always wins.
 
 ```toml
 theme = "omarchy"   # omarchy (default) dark dracula github-dark tokyo-night monokai one-dark solarized-dark nord catppuccin-mocha porcelain deep-sea sunset
@@ -54,9 +60,18 @@ folder = "Journals"
 format = "MMM Do, YYYY"
 ```
 
-A vault name works wherever a path does. With no argument kb opens `KB_VAULT`, else the first configured vault, else the current directory.
+🗂️ A vault name works wherever a path does. With no argument kb opens `KB_VAULT`, else the first configured vault, else the current directory.
 
-## Develop
+## 🎨 Themes
+
+kb ships twelve palettes and, on [Omarchy](https://omarchy.org), blends in with the rest of your desktop.
+
+- 🌈 **Follows Omarchy.** When `theme` is empty or `"omarchy"`, kb reads the active palette from `~/.local/state/omarchy/current/theme/colors.toml`.
+- 🔁 **Repaints live.** Run `omarchy theme set <name>` and a running kb switches colours on the spot. No restart.
+- 🎯 **Your choice wins.** A named theme such as `theme = "nord"` always overrides Omarchy.
+- 🌍 **Works anywhere.** Off Omarchy, kb falls back to `dark`, or to whichever theme you named.
+
+## 🧪 Develop
 
 `make test` runs vet and the tests. `KB_VAULT=~/git/vault go test ./internal/search -run Budgets -v` checks the load and query budgets against a real vault.
 
