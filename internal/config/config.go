@@ -16,7 +16,7 @@ import (
 // Config is the parsed config file.
 type Config struct {
 	Vaults []VaultCfg `toml:"vault"`
-	// Theme names an Overseer palette; empty means the default.
+	// Theme names an Overseer palette; empty or "omarchy" follows the active Omarchy theme, else dark.
 	Theme string `toml:"theme"`
 }
 

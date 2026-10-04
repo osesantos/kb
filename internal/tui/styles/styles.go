@@ -55,8 +55,10 @@ type Styles struct {
 }
 
 // NewWithTheme builds Styles from the named theme; unknown names fall back to dark.
-func NewWithTheme(themeName string) *Styles {
-	t := LoadTheme(themeName)
+func NewWithTheme(themeName string) *Styles { return NewFromTheme(LoadTheme(themeName)) }
+
+// NewFromTheme builds Styles from a resolved palette.
+func NewFromTheme(t Theme) *Styles {
 	fg := func(c color.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
 	helpKey := lipgloss.NewStyle().Foreground(t.Text).Background(t.HelpBarBg).Bold(true)
 

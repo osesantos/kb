@@ -40,8 +40,10 @@ k9s for your knowledge base — a fast, keyboard-driven terminal UI to read, nav
 
 `~/.config/kb/config.toml`:
 
+On [Omarchy](https://omarchy.org), an empty `theme` or `"omarchy"` follows the active Omarchy theme and repaints live on `omarchy theme set`. Off Omarchy it falls back to `dark`. A named theme always wins.
+
 ```toml
-theme = "dark"   # dark dracula github-dark tokyo-night monokai one-dark solarized-dark nord catppuccin-mocha porcelain deep-sea sunset
+theme = "omarchy"   # omarchy (default) dark dracula github-dark tokyo-night monokai one-dark solarized-dark nord catppuccin-mocha porcelain deep-sea sunset
 
 [[vault]]
 name = "main"

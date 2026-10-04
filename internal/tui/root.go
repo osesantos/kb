@@ -94,6 +94,8 @@ type Model struct {
 	hist      []string
 	pos       int
 	watch     *vault.Watcher
+	// themes signals an Omarchy theme switch; nil when not following Omarchy.
+	themes <-chan struct{}
 	// editing is the path last handed to $EDITOR.
 	editing string
 	// returnTo is the view Esc goes back to after opening a hit from it (search results).
@@ -120,7 +122,7 @@ type previewCache struct {
 
 // New builds the root model for a vault; watch may be nil (tests).
 func New(cfg config.Config, v *vault.Vault, watch *vault.Watcher) *Model {
-	m := &Model{st: styles.NewWithTheme(cfg.Theme), cfg: cfg, cfgPath: config.Path(), v: v, watch: watch, pos: -1, board: newBoard(time.Now())}
+	m := &Model{st: styles.NewFromTheme(styles.ResolveTheme(cfg.Theme, omarchyDir)), cfg: cfg, cfgPath: config.Path(), v: v, watch: watch, pos: -1, board: newBoard(time.Now())}
 	m.view = newNotes(m)
 	if watch != nil && len(watch.Unwatched) > 0 {
 		m.fail("live refresh is off for %d folders (watch limit?)", len(watch.Unwatched))
@@ -150,7 +152,10 @@ type (
 )
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.waitFS(), m.refreshDirty(), m.recount(), m.autoPull())
+	if styles.FollowsOmarchy(m.cfg.Theme) {
+		m.themes = watchTheme(omarchyDir)
+	}
+	return tea.Batch(m.waitFS(), m.refreshDirty(), m.recount(), m.autoPull(), m.waitTheme())
 }
 
 func (m *Model) waitFS() tea.Cmd {
@@ -213,6 +218,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.recount())
 		}
 		return m, tea.Batch(append(cmds, m.refreshDirty())...)
+	case themeMsg:
+		m.st = styles.NewFromTheme(styles.ResolveTheme(m.cfg.Theme, omarchyDir))
+		m.cache = previewCache{}
+		return m, m.waitTheme()
 	case boardMsg:
 		m.applyBoard(msg)
 	case pushedMsg:
