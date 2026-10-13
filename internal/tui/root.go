@@ -80,6 +80,8 @@ type Model struct {
 	gen   int
 	cache previewCache
 	md    styles.Markdown
+	// plain makes markdown() a pass-through, for the instant preview shown while rendering.
+	plain bool
 
 	prompt    *prompt
 	picker    *picker
@@ -107,17 +109,22 @@ type Model struct {
 	rw, rh int
 }
 
-// find is the in-note search: preview lines containing the query and which one is current.
+// find is the in-note search: every occurrence of the query in the preview and which one is current.
 type find struct {
 	query string
-	hits  []int
+	hits  []hit
 	cur   int
 }
+
+// hit is one find occurrence: a preview line and the cell range [start, end) on it.
+type hit struct{ line, start, end int }
 
 type previewCache struct {
 	key   string
 	width int
 	lines []string
+	// pending marks plain lines shown while the rendered ones are built in the background.
+	pending bool
 }
 
 // New builds the root model for a vault; watch may be nil (tests).
@@ -193,7 +200,19 @@ func (m *Model) fail(format string, a ...any) {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmd := m.update(msg)
+	return m, tea.Batch(cmd, m.ensurePreview())
+}
+
+func (m *Model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
+	case renderedMsg:
+		if msg.key == m.cache.key && msg.width == m.cache.width {
+			m.cache = previewCache(msg)
+			if m.find.query != "" {
+				m.refind()
+			}
+		}
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 	case dirtyMsg:
@@ -217,11 +236,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if slices.ContainsFunc(msg, vault.InGit) {
 			cmds = append(cmds, m.recount())
 		}
-		return m, tea.Batch(append(cmds, m.refreshDirty())...)
+		return tea.Batch(append(cmds, m.refreshDirty())...)
 	case themeMsg:
 		m.st = styles.NewFromTheme(styles.ResolveTheme(m.cfg.Theme, omarchyDir))
 		m.cache = previewCache{}
-		return m, m.waitTheme()
+		return m.waitTheme()
 	case boardMsg:
 		m.applyBoard(msg)
 	case pushedMsg:
@@ -231,13 +250,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.info("pushed %s", strings.TrimSpace(msg.out))
 		}
-		return m, m.refreshDirty()
+		return m.refreshDirty()
 	case pulledMsg:
-		return m, m.pulled(msg)
+		return m.pulled(msg)
 	case switchedMsg:
 		if msg.err != nil {
 			m.fail("switch failed: %v", msg.err)
-			return m, nil
+			return nil
 		}
 		if m.watch != nil {
 			_ = m.watch.Close() // the old watcher is discarded either way
@@ -249,11 +268,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if n := len(msg.w.Unwatched); n > 0 {
 			m.fail("switched to %s; live refresh is off for %d folders", msg.name, n)
 		}
-		return m, tea.Batch(m.waitFS(), m.refreshDirty(), m.recount(), m.autoPull())
+		return tea.Batch(m.waitFS(), m.refreshDirty(), m.recount(), m.autoPull())
 	case reloadedMsg:
 		if msg.v.Root == m.v.Root {
 			m.applyReload(msg.v)
-			return m, m.recount()
+			return m.recount()
 		}
 	case editedMsg:
 		if msg.err != nil {
@@ -262,7 +281,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.conflicts != nil {
 			m.conflicts.refresh(m)
 		}
-		return m, tea.Batch(m.reload(), m.refreshDirty())
+		return tea.Batch(m.reload(), m.refreshDirty())
 	case tea.PasteMsg:
 		switch {
 		case m.finder != nil:
@@ -273,9 +292,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prompt.text += strings.NewReplacer("\r", "", "\n", " ").Replace(msg.Content)
 		}
 	case tea.KeyPressMsg:
-		return m, m.keyPress(msg.String())
+		return m.keyPress(msg.String())
 	}
-	return m, nil
+	return nil
 }
 
 func (m *Model) keyPress(k string) tea.Cmd {
@@ -465,7 +484,7 @@ func (m *Model) external(what string) {
 	m.info("opened %s", what)
 }
 
-// previewLines renders the selection's preview once per (content, width) and caches the lines.
+// previewLines returns the cached preview lines, rendering synchronously only if Update has not prepared them.
 func (m *Model) previewLines(width int) (string, []string) {
 	title, key, body := m.view.preview(m)
 	key = fmt.Sprintf("%d|%s", m.gen, key)
@@ -473,6 +492,31 @@ func (m *Model) previewLines(width int) (string, []string) {
 		m.cache = previewCache{key: key, width: width, lines: strings.Split(body(width), "\n")}
 	}
 	return title, m.cache.lines
+}
+
+// renderedMsg carries a preview rendered off the event loop.
+type renderedMsg previewCache
+
+// ensurePreview fills the cache with the plain preview on a miss and returns a command that renders it in the background.
+func (m *Model) ensurePreview() tea.Cmd {
+	if m.w < minWidth || m.h < minHeight || m.view == nil {
+		return nil
+	}
+	bodyH, _, rightW := m.panes()
+	width, _ := components.TitledPanelInnerSize(m.st, m.right, rightW, bodyH)
+	_, key, _ := m.view.preview(m)
+	key = fmt.Sprintf("%d|%s", m.gen, key)
+	if m.cache.key == key && m.cache.width == width {
+		return nil
+	}
+	plain, bg := *m, *m
+	plain.plain, bg.md = true, styles.Markdown{}
+	_, _, plainBody := m.view.preview(&plain)
+	_, _, body := m.view.preview(&bg)
+	m.cache = previewCache{key: key, width: width, lines: strings.Split(plainBody(width), "\n"), pending: true}
+	return func() tea.Msg {
+		return renderedMsg{key: key, width: width, lines: strings.Split(body(width), "\n")}
+	}
 }
 
 func (m *Model) View() tea.View {
@@ -555,13 +599,17 @@ func (m *Model) helpBar(hints []hint) string {
 	return bar.Render(b.String())
 }
 
-func (m *Model) layout() string {
-	bodyH := max(m.h-2, 1)
-	leftW := m.w * listPercent / 100
+// panes returns the body height and the list and preview pane widths for the current screen.
+func (m *Model) panes() (bodyH, leftW, rightW int) {
+	bodyH, leftW = max(m.h-2, 1), m.w*listPercent/100
 	if _, ok := m.view.(*notesView); ok {
 		leftW = min(max(m.w*notesPercent/100, notesMinWidth)+notesExtra, m.w-minWidth/2)
 	}
-	rightW := m.w - leftW
+	return bodyH, leftW, m.w - leftW
+}
+
+func (m *Model) layout() string {
+	bodyH, leftW, rightW := m.panes()
 
 	listH := bodyH
 	_, notes := m.view.(*notesView)
@@ -584,7 +632,7 @@ func (m *Model) layout() string {
 	title, lines := m.previewLines(rw)
 	m.scroll = max(min(m.scroll, len(lines)-rh), 0)
 	end := min(m.scroll+rh, len(lines))
-	shown := strings.Join(lines[m.scroll:end], "\n")
+	shown := strings.Join(m.highlight(lines[m.scroll:end], m.scroll), "\n")
 	right := components.PanelWithTitle(m.st, shown, title, m.right, rightW, bodyH).Content
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)

@@ -4,9 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,4 +145,40 @@ func TestAutoCommitStagesCommitsAndPushes(t *testing.T) {
 	_, cmd = m.Update(keyMsg("A"))
 	assert.Nil(t, cmd)
 	assert.Contains(t, screen(m), "nothing to commit")
+}
+
+func TestPreviewRendersInBackgroundAndDropsStaleResults(t *testing.T) {
+	_, m := newApp(t)
+	m.cache = previewCache{}
+	stale := m.ensurePreview()().(renderedMsg)
+	assert.True(t, m.cache.pending, "plain lines are shown while rendering")
+	assert.Contains(t, strings.Join(m.cache.lines, "\n"), "# A", "plain fallback is the raw markdown")
+	press(m, "j")
+	fresh := m.cache
+	_, cmd := m.Update(stale)
+	assert.Equal(t, fresh, m.cache, "a render for a note no longer selected is dropped")
+	assert.Nil(t, cmd, "dropping a stale render starts no new one")
+	m.cache = previewCache{}
+	m.Update(m.ensurePreview()().(renderedMsg))
+	assert.False(t, m.cache.pending)
+	assert.NotContains(t, strings.Join(m.cache.lines, "\n"), "# B")
+}
+
+func TestFindHighlightsEveryOccurrenceAndRefindsAfterRender(t *testing.T) {
+	d, m := newApp(t)
+	write(t, d, "A.md", "one x x x\n\n🙂 x")
+	m.applyReload(vault.Load(d))
+	m.cache = previewCache{}
+	render := m.ensurePreview()
+	press(m, "enter", "/")
+	typeStr(m, "X")
+	press(m, "enter")
+	assert.Contains(t, screen(m), "match 1/4")
+	m.Update(render().(renderedMsg))
+	assert.Contains(t, screen(m), "match 1/4")
+	h := m.find.hits[3]
+	assert.Equal(t, "x", ansi.Cut(ansi.Strip(m.cache.lines[h.line]), h.start, h.end), "hit ranges are display cells, past the wide emoji")
+	out := m.View().Content
+	assert.Contains(t, out, m.st.Find.Current.Render("x"))
+	assert.Contains(t, out, m.st.Find.Match.Render("x"))
 }

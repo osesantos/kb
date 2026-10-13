@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
-	"github.com/osesantos/kb/internal/tui/styles"
-
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/osesantos/kb/internal/tui/styles"
 )
 
 // scrollKey handles the preview pane's scrolling keys; it reports whether k was one of them.
@@ -42,6 +44,9 @@ func (m *Model) previewKey(k string) {
 
 // markdown is the glamour renderer for width, rebuilt only when the width changes.
 func (m *Model) markdown(width int) styles.Markdown {
+	if m.plain {
+		return styles.Markdown{}
+	}
 	if m.md.Width() != width {
 		m.md = m.st.NewMarkdown(width)
 	}
@@ -66,20 +71,68 @@ func (m *Model) moveSel(sel *int, n int, k string) bool {
 	return true
 }
 
-// runFind records the preview lines containing q and jumps to the first; glamour output cannot be highlighted inline.
+// runFind records every occurrence of q in the preview and jumps to the first.
 func (m *Model) runFind(q string) {
 	m.find = find{query: q}
-	if strings.TrimSpace(q) == "" {
+	m.refind()
+	m.jumpFind()
+}
+
+// refind recomputes the hits for the current query, keeping the current hit's line as close as possible.
+func (m *Model) refind() {
+	line := 0
+	if m.find.cur < len(m.find.hits) {
+		line = m.find.hits[m.find.cur].line
+	}
+	m.find.hits, m.find.cur = nil, 0
+	if strings.TrimSpace(m.find.query) == "" {
 		return
 	}
 	_, lines := m.previewLines(m.rw)
+	m.find.hits = findHits(lines, m.find.query)
+	m.find.cur = max(slices.IndexFunc(m.find.hits, func(h hit) bool { return h.line >= line }), 0)
+}
+
+// findHits returns every case-insensitive occurrence of q in lines, as cell ranges of the visible text.
+func findHits(lines []string, q string) []hit {
 	needle := strings.ToLower(q)
+	var hits []hit
 	for i, l := range lines {
-		if strings.Contains(strings.ToLower(ansi.Strip(l)), needle) {
-			m.find.hits = append(m.find.hits, i)
+		text := strings.ToLower(ansi.Strip(l))
+		for off := 0; ; {
+			j := strings.Index(text[off:], needle)
+			if j < 0 {
+				break
+			}
+			start := ansi.StringWidth(text[:off+j])
+			hits = append(hits, hit{i, start, start + ansi.StringWidth(needle)})
+			off += j + len(needle)
 		}
 	}
-	m.jumpFind()
+	return hits
+}
+
+// highlight paints the find hits that fall on lines (which start at preview line first).
+func (m *Model) highlight(lines []string, first int) []string {
+	if len(m.find.hits) == 0 {
+		return lines
+	}
+	out := slices.Clone(lines)
+	ranges := map[int][]lipgloss.Range{}
+	for j, h := range m.find.hits {
+		if h.line < first || h.line >= first+len(lines) {
+			continue
+		}
+		st := m.st.Find.Match
+		if j == m.find.cur {
+			st = m.st.Find.Current
+		}
+		ranges[h.line-first] = append(ranges[h.line-first], lipgloss.NewRange(h.start, h.end, st))
+	}
+	for i, r := range ranges {
+		out[i] = lipgloss.StyleRanges(out[i], r...)
+	}
+	return out
 }
 
 func (m *Model) stepFind(d int) {
@@ -91,7 +144,7 @@ func (m *Model) stepFind(d int) {
 
 func (m *Model) jumpFind() {
 	if m.find.cur < len(m.find.hits) {
-		m.scroll = max(m.find.hits[m.find.cur]-m.rh/3, 0)
+		m.scroll = max(m.find.hits[m.find.cur].line-m.rh/3, 0)
 	}
 }
 

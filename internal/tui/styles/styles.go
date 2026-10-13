@@ -51,6 +51,8 @@ type Styles struct {
 		Label, Selected lipgloss.Style
 		Shades          [5]lipgloss.Style
 	}
+	// Find marks in-note search hits: every Match, and the Current one stronger.
+	Find   struct{ Match, Current lipgloss.Style }
 	Glyphs Glyphs
 }
 
@@ -63,6 +65,8 @@ func NewFromTheme(t Theme) *Styles {
 	helpKey := lipgloss.NewStyle().Foreground(t.Text).Background(t.HelpBarBg).Bold(true)
 
 	s := &Styles{Glyphs: NewGlyphs()}
+	s.Find.Match = lipgloss.NewStyle().Background(t.SelectionBg)
+	s.Find.Current = lipgloss.NewStyle().Foreground(t.ModalBg).Background(t.Warning).Bold(true)
 	s.Border = BorderStyles{
 		Focused:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(t.BorderFocus),
 		Blurred:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(t.Border),
