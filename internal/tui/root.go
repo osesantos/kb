@@ -624,7 +624,7 @@ func (m *Model) layout() string {
 	if showBoard {
 		boardFocus := !m.right && m.board.focus
 		bw, _ := components.TitledPanelInnerSize(m.st, boardFocus, leftW, boardH)
-		left = lipgloss.JoinVertical(lipgloss.Left, left, components.PanelWithTitle(m.st, m.boardView(bw), m.boardTitle(), boardFocus, leftW, boardH).Content)
+		left += "\n" + components.PanelWithTitle(m.st, m.boardView(bw), m.boardTitle(), boardFocus, leftW, boardH).Content
 	}
 
 	rw, rh := components.TitledPanelInnerSize(m.st, m.right, rightW, bodyH)
@@ -635,8 +635,7 @@ func (m *Model) layout() string {
 	shown := strings.Join(m.highlight(lines[m.scroll:end], m.scroll), "\n")
 	right := components.PanelWithTitle(m.st, shown, title, m.right, rightW, bodyH).Content
 
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	return lipgloss.JoinVertical(lipgloss.Left, m.titlebar(), body, m.footer())
+	return strings.Join([]string{m.titlebar(), sideBySide(left, right), m.footer()}, "\n")
 }
 
 // listPane renders the visible window of the view's rows, keeping the selection in sight.
@@ -664,4 +663,17 @@ func (m *Model) listPane(w, h int, rows []row, sel int) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// sideBySide joins two blocks line by line; unlike lipgloss.JoinHorizontal it does not re-measure, so both
+// blocks must already be padded to their full width.
+func sideBySide(left, right string) string {
+	l, r := strings.Split(left, "\n"), strings.Split(right, "\n")
+	if len(l) != len(r) {
+		return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+	}
+	for i := range l {
+		l[i] += r[i]
+	}
+	return strings.Join(l, "\n")
 }

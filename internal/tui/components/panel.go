@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/osesantos/kb/internal/tui/styles"
 )
 
@@ -100,12 +101,6 @@ func PanelWithTitle(s *styles.Styles, content, title string, focused bool, width
 	borderW, borderH := borderStyle.GetFrameSize()
 	containerOuterW := max(width-borderW, 0)
 	containerOuterH := max(height-borderH, 0)
-	padded := s.Pane.Container.
-		PaddingBottom(titledPanelPaddingBottom).
-		Width(containerOuterW).Height(containerOuterH).
-		MaxHeight(containerOuterH).
-		Render(content)
-
 	chars := lipgloss.RoundedBorder()
 	titleRendered := s.Border.Title.Render(title)
 	titleW := lipgloss.Width(titleRendered) + 2
@@ -121,10 +116,51 @@ func PanelWithTitle(s *styles.Styles, content, title string, focused bool, width
 		" " + titleRendered + " " +
 		borderChar.Render(strings.Repeat(chars.Top, trailDashes)+chars.TopRight)
 
+	if rows, ok := fitRows(s, content, containerOuterW, containerOuterH); ok {
+		side := borderChar.Render(chars.Left)
+		out := make([]string, 0, len(rows)+2)
+		out = append(out, topRow)
+		for _, r := range rows {
+			out = append(out, side+r+borderChar.Render(chars.Right))
+		}
+		out = append(out, borderChar.Render(chars.BottomLeft+strings.Repeat(chars.Bottom, max(width-2, 0))+chars.BottomRight))
+		return tea.NewView(strings.Join(out, "\n"))
+	}
+
+	padded := s.Pane.Container.
+		PaddingBottom(titledPanelPaddingBottom).
+		Width(containerOuterW).Height(containerOuterH).
+		MaxHeight(containerOuterH).
+		Render(content)
+
 	rest := borderStyle.BorderTop(false).
 		Width(width).
 		Height(max(height-1, 1)).
 		Render(padded)
 
 	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, topRow, rest))
+}
+
+// fitRows lays content out as the padded rows of a titled panel's interior without lipgloss wrapping, which is
+// slow on long styled lines. It reports false when a line would need wrapping, so the caller falls back to lipgloss.
+func fitRows(s *styles.Styles, content string, outerW, outerH int) ([]string, bool) {
+	t, r, b, l := s.Pane.Container.GetPadding()
+	innerW := outerW - l - r
+	if t != 0 || b != 0 || innerW < 1 {
+		return nil, false
+	}
+	lines := append(strings.Split(content, "\n"), make([]string, titledPanelPaddingBottom)...)
+	rows := make([]string, outerH)
+	for i := range rows {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+		w := ansi.StringWidth(line)
+		if w > innerW {
+			return nil, false
+		}
+		rows[i] = strings.Repeat(" ", l) + line + strings.Repeat(" ", innerW-w+r)
+	}
+	return rows, true
 }
