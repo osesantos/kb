@@ -1,11 +1,9 @@
-// Package daily resolves the daily-note convention: a folder plus a moment.js filename format, as Obsidian stores it.
+// Package daily resolves the daily-note convention: a folder plus a moment.js filename format.
 package daily
 
 import (
 	"cmp"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -13,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/BurntSushi/toml"
 	"github.com/osesantos/kb/internal/config"
 )
 
@@ -22,15 +21,15 @@ type Daily struct {
 	Format string
 }
 
-// Resolve takes each field from the config override, else .obsidian/daily-notes.json, else Obsidian's defaults.
+// Resolve takes each field from the config override, else the vault's .kb/config.toml `[daily]` table, else YYYY-MM-DD at the root.
 func Resolve(root string, over config.DailyCfg) Daily {
-	var obs struct{ Folder, Format string }
-	if b, err := os.ReadFile(filepath.Join(root, ".obsidian", "daily-notes.json")); err == nil {
-		_ = json.Unmarshal(b, &obs) // a broken file means no Obsidian settings, same as a missing one
+	var local struct {
+		Daily config.DailyCfg `toml:"daily"`
 	}
+	_, _ = toml.DecodeFile(filepath.Join(root, ".kb", "config.toml"), &local) // missing or broken file means no vault settings
 	return Daily{
-		Folder: strings.Trim(cmp.Or(over.Folder, obs.Folder), "/"),
-		Format: cmp.Or(over.Format, obs.Format, "YYYY-MM-DD"),
+		Folder: strings.Trim(cmp.Or(over.Folder, local.Daily.Folder), "/"),
+		Format: cmp.Or(over.Format, local.Daily.Format, "YYYY-MM-DD"),
 	}
 }
 
@@ -88,7 +87,7 @@ func token(tok string, t time.Time) string {
 	}
 }
 
-// Moment formats t with the moment.js tokens Obsidian users put in filenames; `[text]` is literal.
+// Moment formats t with moment.js tokens; `[text]` is literal.
 func Moment(format string, t time.Time) string {
 	var out strings.Builder
 	for rest := format; rest != ""; {

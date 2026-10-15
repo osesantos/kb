@@ -32,11 +32,11 @@ func TestFormatsMomentTokens(t *testing.T) {
 	}
 }
 
-func TestResolvesConfigOverObsidianOverDefaults(t *testing.T) {
+func TestResolvesConfigOverVaultFileOverDefaults(t *testing.T) {
 	d := t.TempDir()
 	assert.Equal(t, Daily{Folder: "", Format: "YYYY-MM-DD"}, Resolve(d, config.DailyCfg{}))
-	require.NoError(t, os.Mkdir(filepath.Join(d, ".obsidian"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(d, ".obsidian/daily-notes.json"), []byte(`{"format":"MMM Do, YYYY","folder":"Journals/"}`), 0o644))
+	require.NoError(t, os.Mkdir(filepath.Join(d, ".kb"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(d, ".kb/config.toml"), []byte("[daily]\nformat = \"MMM Do, YYYY\"\nfolder = \"Journals/\"\n"), 0o644))
 	assert.Equal(t, "Journals/Oct 2nd, 2026.md", Resolve(d, config.DailyCfg{}).Path(day(2026, 10, 2)))
 	assert.Equal(t, "Journals/2026-10-02.md", Resolve(d, config.DailyCfg{Format: "YYYY-MM-DD"}).Path(day(2026, 10, 2)))
 }

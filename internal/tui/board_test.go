@@ -59,7 +59,7 @@ func boardApp(t *testing.T) (string, *Model) {
 	t.Helper()
 	d, m := newApp(t)
 	today := time.Now()
-	write(t, d, ".obsidian/daily-notes.json", `{"folder":"J","format":"YYYY-MM-DD"}`)
+	write(t, d, ".kb/config.toml", "[daily]\nfolder = \"J\"\nformat = \"YYYY-MM-DD\"\n")
 	write(t, d, "J/"+today.Format("2006-01-02")+".md", "today's daily")
 	m.applyReload(vault.Load(d))
 	runCmd(m, m.recount())

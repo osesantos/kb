@@ -27,7 +27,7 @@ type VaultCfg struct {
 	Daily DailyCfg `toml:"daily"`
 }
 
-// DailyCfg holds daily-note overrides; an empty field falls back to the vault's Obsidian settings.
+// DailyCfg holds daily-note overrides; an empty field falls back to the vault's own .kb/config.toml.
 type DailyCfg struct {
 	Folder string `toml:"folder"`
 	Format string `toml:"format"`

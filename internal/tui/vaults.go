@@ -68,7 +68,7 @@ func (v *vaultsView) preview(m *Model) (string, string, func(int) string) {
 
 func orDefault(s string) string {
 	if s == "" {
-		return "from .obsidian/daily-notes.json"
+		return "from the vault's .kb/config.toml"
 	}
 	return s
 }

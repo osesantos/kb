@@ -55,10 +55,20 @@ theme = "omarchy"   # omarchy (default) dark dracula github-dark tokyo-night mon
 name = "main"
 path = "~/git/vault"
 
-[vault.daily]            # optional; defaults come from .obsidian/daily-notes.json
+[vault.daily]            # optional; overrides the vault's own settings below
 folder = "Journals"
 format = "MMM Do, YYYY"
 ```
+
+A vault carries its own daily-note convention in `<vault>/.kb/config.toml`, so it travels with the repo:
+
+```toml
+[daily]
+folder = "Journals"
+format = "MMM Do, YYYY"   # moment.js tokens: YYYY YY MMMM MMM MM M Do DD D dddd ddd WW W, [literal]
+```
+
+Without either, daily notes are `YYYY-MM-DD.md` at the vault root.
 
 🗂️ A vault name works wherever a path does. With no argument kb opens `KB_VAULT`, else the first configured vault, else the current directory.
 

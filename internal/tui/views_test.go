@@ -143,7 +143,7 @@ func TestActivityAttributesTrailersAndShowsCommit(t *testing.T) {
 func TestCalOpensTodayFromObsidianConventionAndOffersCreate(t *testing.T) {
 	d, m := newApp(t)
 	today := time.Now()
-	write(t, d, ".obsidian/daily-notes.json", `{"folder":"J","format":"YYYY-MM-DD"}`)
+	write(t, d, ".kb/config.toml", "[daily]\nfolder = \"J\"\nformat = \"YYYY-MM-DD\"\n")
 	write(t, d, "J/"+today.Format("2006-01-02")+".md", "today note")
 	m.applyReload(vault.Load(d))
 	command(m, "cal")
