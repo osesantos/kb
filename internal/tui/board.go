@@ -60,19 +60,41 @@ func (b *board) shift(d int) (monthChanged bool) {
 	return changed
 }
 
+// journalDates maps the daily note path of each day from a year before month to a month after it to that day.
+// ponytail: a journal dated outside that window keeps its commit date; widen it if old journals get backfilled.
+func journalDates(dl daily.Daily, month time.Time) map[string]time.Time {
+	dates := map[string]time.Time{}
+	for d := month.AddDate(-1, 0, 0); d.Before(month.AddDate(0, 2, 0)); d = d.AddDate(0, 0, 1) {
+		dates[dl.Path(d)] = d
+	}
+	return dates
+}
+
 // countCreated buckets notes created in month by day: git first-add dates, plus uncommitted new notes by mtime.
-// A vault outside git falls back to every note's mtime.
-func countCreated(root string, notes []string, month time.Time) map[int][]string {
+// A vault outside git falls back to every note's mtime. A daily note always counts on the day it is dated.
+func countCreated(root string, dl daily.Daily, notes []string, month time.Time) map[int][]string {
 	end := month.AddDate(0, 1, 0)
 	byDay := map[int][]string{}
+	journals := journalDates(dl, month)
 	add := func(path string, at time.Time) {
+		if d, ok := journals[path]; ok {
+			at = d
+		}
 		if !at.Before(month) && at.Before(end) {
 			byDay[at.Day()] = append(byDay[at.Day()], path)
 		}
 	}
 	mtime := func(path string) (time.Time, bool) {
 		st, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
-		return st.ModTime(), err == nil
+		if err != nil {
+			return time.Time{}, false
+		}
+		return st.ModTime(), true
+	}
+	for d := month; d.Before(end); d = d.AddDate(0, 0, 1) {
+		if _, ok := mtime(dl.Path(d)); ok {
+			add(dl.Path(d), d)
+		}
 	}
 	created, err := git.Created(root, month, end)
 	if err != nil {
@@ -81,7 +103,7 @@ func countCreated(root string, notes []string, month time.Time) map[int][]string
 				add(p, at)
 			}
 		}
-		return byDay
+		return sorted(byDay)
 	}
 	for p, at := range created {
 		add(p, at.In(month.Location()))
@@ -101,6 +123,10 @@ func countCreated(root string, notes []string, month time.Time) map[int][]string
 			}
 		}
 	}
+	return sorted(byDay)
+}
+
+func sorted(byDay map[int][]string) map[int][]string {
 	for d := range byDay {
 		slices.Sort(byDay[d])
 		byDay[d] = slices.Compact(byDay[d])
@@ -109,12 +135,14 @@ func countCreated(root string, notes []string, month time.Time) map[int][]string
 }
 
 func (m *Model) recount() tea.Cmd {
-	root, month := m.v.Root, m.board.month
+	root, month, over := m.v.Root, m.board.month, m.cfg.Daily(m.v.Root)
 	notes := make([]string, len(m.v.Notes))
 	for i, n := range m.v.Notes {
 		notes[i] = n.Path
 	}
-	return func() tea.Msg { return boardMsg{root: root, month: month, created: countCreated(root, notes, month)} }
+	return func() tea.Msg {
+		return boardMsg{root: root, month: month, created: countCreated(root, daily.Resolve(root, over), notes, month)}
+	}
 }
 
 func (m *Model) applyBoard(msg boardMsg) {

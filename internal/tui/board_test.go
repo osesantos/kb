@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/osesantos/kb/internal/daily"
 	"github.com/osesantos/kb/internal/vault"
 )
 
@@ -32,12 +33,27 @@ func TestCountCreatedUsesGitAddsAndUncommittedMtime(t *testing.T) {
 	gitRun(t, d, "commit", "-q", "-m", "old")
 	write(t, d, "new.md", "fresh")
 	month := time.Date(time.Now().Year(), time.Now().Month(), 1, 0, 0, 0, 0, time.Local)
-	got := countCreated(d, nil, month)
+	got := countCreated(d, daily.Daily{Format: "YYYY-MM-DD"}, nil, month)
 	assert.Equal(t, []string{"new.md", "old.md"}, got[time.Now().Day()])
 
 	plain := t.TempDir()
 	write(t, plain, "n.md", "x")
-	assert.Equal(t, []string{"n.md"}, countCreated(plain, []string{"n.md"}, month)[time.Now().Day()], "outside git, mtime counts")
+	assert.Equal(t, []string{"n.md"}, countCreated(plain, daily.Daily{Format: "YYYY-MM-DD"}, []string{"n.md"}, month)[time.Now().Day()], "outside git, mtime counts")
+}
+
+func TestCountCreatedPutsJournalsOnTheirOwnDay(t *testing.T) {
+	d := t.TempDir()
+	gitInit(t, d)
+	dl := daily.Daily{Folder: "Journals", Format: "MMM Do, YYYY"}
+	month := time.Date(time.Now().Year(), time.Now().Month(), 1, 0, 0, 0, 0, time.Local)
+	thisMonth, lastMonth := dl.Path(month), dl.Path(month.AddDate(0, 0, -1))
+	write(t, d, thisMonth, "x")
+	write(t, d, lastMonth, "x")
+	gitRun(t, d, "add", "-A")
+	gitRun(t, d, "commit", "-q", "-m", "journals")
+	got := countCreated(d, dl, nil, month)
+	assert.Equal(t, []string{thisMonth}, got[1], "a journal counts on the day it is dated")
+	assert.NotContains(t, got[time.Now().Day()], lastMonth, "last month's journal is not counted on its commit day")
 }
 
 func TestBoardDrawsWeekdayRowsWeekColumnsAndLegend(t *testing.T) {
