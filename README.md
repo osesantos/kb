@@ -49,7 +49,7 @@
 `~/.config/kb/config.toml`:
 
 ```toml
-theme = "omarchy"   # omarchy (default) dark dracula github-dark tokyo-night monokai one-dark solarized-dark nord catppuccin-mocha porcelain deep-sea sunset
+theme = "omarchy"   # omarchy (default) dark dracula github-dark tokyo-night monokai one-dark solarized-dark nord catppuccin-mocha gruvbox-material porcelain deep-sea sunset
 
 [[vault]]
 name = "main"

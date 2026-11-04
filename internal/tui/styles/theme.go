@@ -54,6 +54,8 @@ func LoadTheme(name string) Theme {
 		return NordTheme()
 	case "catppuccin-mocha":
 		return CatppuccinMochaTheme()
+	case "gruvbox-material":
+		return GruvboxMaterialTheme()
 	case "porcelain":
 		return PorcelainTheme()
 	case "deep-sea":

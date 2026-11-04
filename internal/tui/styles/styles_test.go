@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var themes = []string{"dark", "dracula", "github-dark", "tokyo-night", "monokai", "one-dark", "solarized-dark", "nord", "catppuccin-mocha", "porcelain", "deep-sea", "sunset"}
+var themes = []string{"dark", "dracula", "github-dark", "tokyo-night", "monokai", "one-dark", "solarized-dark", "nord", "catppuccin-mocha", "gruvbox-material", "porcelain", "deep-sea", "sunset"}
 
 // TestBoardShadesAreEasyToTellApart requires clear lightness steps between neighbouring board shades in every theme;
 // the first blend shipped steps of 0.10, which read as almost the same colour.
