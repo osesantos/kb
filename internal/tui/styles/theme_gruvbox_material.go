@@ -6,15 +6,15 @@ import "charm.land/lipgloss/v2"
 
 func GruvboxMaterialTheme() Theme {
 	return Theme{
-		Primary:         lipgloss.Color("#7DAEA3"),
+		Primary:         lipgloss.Color("#CAA264"),
 		Accent:          lipgloss.Color("#A9B665"),
-		Warning:         lipgloss.Color("#D8A657"),
+		Warning:         lipgloss.Color("#E78A4E"),
 		Danger:          lipgloss.Color("#EA6962"),
 		Muted:           lipgloss.Color("#7C6F64"),
 		Text:            lipgloss.Color("#D4BE98"),
 		Subtext:         lipgloss.Color("#A89984"),
 		Border:          lipgloss.Color("#5A524C"),
-		BorderFocus:     lipgloss.Color("#89B482"),
+		BorderFocus:     lipgloss.Color("#CAA264"),
 		SelectionBg:     lipgloss.Color("#45403D"),
 		TitleText:       lipgloss.Color("#282828"),
 		TitleSubtext:    lipgloss.Color("#32302F"),
@@ -25,7 +25,7 @@ func GruvboxMaterialTheme() Theme {
 		OverlayBg:       lipgloss.Color("#1B1B1B"),
 		StatusRunningFg: lipgloss.Color("#A9B665"),
 		StatusRunningBg: lipgloss.Color("#3B4439"),
-		StatusWaitingFg: lipgloss.Color("#D8A657"),
+		StatusWaitingFg: lipgloss.Color("#E78A4E"),
 		StatusWaitingBg: lipgloss.Color("#4F422E"),
 		StatusIdleFg:    lipgloss.Color("#7C6F64"),
 		StatusDeadFg:    lipgloss.Color("#EA6962"),
